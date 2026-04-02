@@ -3,3 +3,4 @@
 *.xcodeproj/
 *.xcworkspace/
 .swiftpm/
+Resources/AppIcon.iconset/
