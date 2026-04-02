@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ServiceManagement
 
 @main
 struct TranslateKitApp: App {
@@ -17,6 +18,7 @@ struct TranslateKitApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var floatingPanel: FloatingTranslationPanel?
+    private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.servicesProvider = ServiceProvider()
@@ -29,7 +31,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        print("[TranslateKit] Started")
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(preferencesChanged),
+            name: UserDefaults.didChangeNotification,
+            object: nil
+        )
+    }
+
+    // Open Settings when launched from Spotlight / double-click
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openSettings()
+        return false
     }
 
     // MARK: - Menu Bar
@@ -41,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.action = #selector(statusItemClicked(_:))
             button.target = self
         }
+        statusItem?.isVisible = PreferencesManager.shared.showMenuBarIcon
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
@@ -73,8 +87,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         engineItem.submenu = engineSubmenu
         menu.addItem(engineItem)
 
-        // Language
-        let langItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
+        // Target Language
+        let langItem = NSMenuItem(title: "Target Language", action: nil, keyEquivalent: "")
         let langSubmenu = NSMenu()
         let prefs = PreferencesManager.shared
         for lang in Language.targetLanguages {
@@ -105,9 +119,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BackendManager.shared.setActive(backend)
     }
 
-    @objc private func openSettings() {
+    @objc private func setLanguage(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let lang = Language(rawValue: raw) else { return }
+        PreferencesManager.shared.targetLanguage = lang
+    }
+
+    // MARK: - Settings Window
+
+    @objc @discardableResult private func openSettings() -> Bool {
+        if let existing = settingsWindow, existing.isVisible {
+            existing.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return true
+        }
+
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 600),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -116,18 +144,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "TranslateKit Settings"
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView:
-            SettingsView()
-                .environmentObject(BackendManager.shared)
-                .environmentObject(PreferencesManager.shared)
+            SettingsView {
+                window.close()
+            }
+            .environmentObject(BackendManager.shared)
+            .environmentObject(PreferencesManager.shared)
         )
+        settingsWindow = window
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    @objc private func setLanguage(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let lang = Language(rawValue: raw) else { return }
-        PreferencesManager.shared.targetLanguage = lang
+        return true
     }
 
     // MARK: - Service Handler
@@ -156,5 +182,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.floatingPanel = panel
             panel.presentNearCursor()
         }
+    }
+
+    // MARK: - Preferences observer
+
+    @objc private func preferencesChanged() {
+        statusItem?.isVisible = PreferencesManager.shared.showMenuBarIcon
     }
 }

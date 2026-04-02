@@ -1,43 +1,33 @@
 import SwiftUI
+import ServiceManagement
 
 struct SettingsView: View {
+    var onDone: (() -> Void)? = nil
+
     @EnvironmentObject private var preferences: PreferencesManager
     @EnvironmentObject private var backendManager: BackendManager
-    @Environment(\.dismiss) private var dismiss
 
     @State private var deeplAPIKey = ""
     @State private var googleCloudAPIKey = ""
     @State private var selectedBackendID = "google-web"
     @State private var showingSaved = false
 
-    private let labelWidth: CGFloat = 150
-
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Settings")
-                    .font(.system(size: 18, weight: .semibold))
-                Spacer()
-                Button("Done") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 12)
-
-            Divider()
-
+            // Content
             Form {
-                Section {
+                Section("General") {
                     Toggle("Launch at login", isOn: $preferences.launchAtLogin)
+                        .onChange(of: preferences.launchAtLogin) { newValue in
+                            toggleLaunchAtLogin(enabled: newValue)
+                        }
+
                     Toggle("Show menu bar icon", isOn: $preferences.showMenuBarIcon)
+
                     Toggle("Auto-detect source language", isOn: $preferences.autoDetectSource)
-                } header: {
-                    Text("General")
                 }
 
-                Section {
+                Section("Translation") {
                     Picker("Target language:", selection: $preferences.targetLanguage) {
                         ForEach(Language.targetLanguages) { lang in
                             Text("\(lang.flag) \(lang.displayName)").tag(lang)
@@ -54,18 +44,12 @@ struct SettingsView: View {
                             backendManager.setActive(backend)
                         }
                     }
-                } header: {
-                    Text("Translation")
                 }
 
-                Section {
-                    Text("Stored securely in macOS Keychain.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-
-                    LabeledContent("DeepL API Key:") {
+                Section("API Keys") {
+                    LabeledContent("DeepL") {
                         HStack(spacing: 6) {
-                            SecureField("Enter key", text: $deeplAPIKey)
+                            SecureField("API key", text: $deeplAPIKey)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(size: 12))
                             Toggle("Pro", isOn: $preferences.deeplIsPro)
@@ -77,15 +61,12 @@ struct SettingsView: View {
                         }
                     }
 
-                    LabeledContent("") {
-                        Link("Get free DeepL API key \u{2192}",
-                             destination: URL(string: "https://www.deepl.com/pro-api")!)
-                            .font(.system(size: 10))
-                    }
+                    Link("Get free DeepL API key", destination: URL(string: "https://www.deepl.com/pro-api")!)
+                        .font(.system(size: 11))
 
-                    LabeledContent("Google Cloud Key:") {
+                    LabeledContent("Google Cloud") {
                         HStack(spacing: 6) {
-                            SecureField("Enter key", text: $googleCloudAPIKey)
+                            SecureField("API key", text: $googleCloudAPIKey)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(size: 12))
                             Button("Save") {
@@ -94,26 +75,28 @@ struct SettingsView: View {
                         }
                     }
 
-                    LabeledContent("") {
-                        Link("Get Google Cloud API key \u{2192}",
-                             destination: URL(string: "https://console.cloud.google.com/apis/credentials")!)
-                            .font(.system(size: 10))
-                    }
+                    Link("Get Google Cloud API key", destination: URL(string: "https://console.cloud.google.com/apis/credentials")!)
+                        .font(.system(size: 11))
 
                     if showingSaved {
-                        LabeledContent("") {
-                            Label("Saved!", systemImage: "checkmark.circle.fill")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.green)
-                        }
+                        Label("Saved in Keychain", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.green)
                     }
-                } header: {
-                    Text("API Keys")
                 }
             }
             .formStyle(.grouped)
+
+            // Done button at bottom
+            HStack {
+                Spacer()
+                Button("Done") { onDone?() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                Spacer()
+            }
+            .padding(.bottom, 16)
         }
-        .frame(width: 480, height: 520)
         .onAppear {
             deeplAPIKey = KeychainHelper.get("deepl_api_key") ?? ""
             googleCloudAPIKey = KeychainHelper.get("google_cloud_api_key") ?? ""
@@ -135,6 +118,20 @@ struct SettingsView: View {
         withAnimation { showingSaved = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation { showingSaved = false }
+        }
+    }
+
+    private func toggleLaunchAtLogin(enabled: Bool) {
+        if #available(macOS 13.0, *) {
+            do {
+                if enabled {
+                    try SMAppService.mainApp.register()
+                } else {
+                    try SMAppService.mainApp.unregister()
+                }
+            } catch {
+                print("[TranslateKit] Launch at login error: \(error)")
+            }
         }
     }
 }
