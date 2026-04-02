@@ -1,8 +1,10 @@
 # TranslateKit
 
-A lightweight macOS menu bar app that adds **"Translate" to your right-click context menu** for any selected text in any app.
+<p align="center">
+  <img src="Resources/icon.png" width="80">
+</p>
 
-<img src="Resources/icon.png" width="128" align="right">
+A lightweight macOS menu bar app that adds **"Translate" to your right-click context menu** for any selected text in any app.
 
 [![Swift](https://img.shields.io/badge/Swift-5.9-orange.svg)](https://swift.org)
 [![macOS](https://img.shields.io/badge/macOS-13%2B-blue.svg)](https://www.apple.com/macos/)
@@ -34,8 +36,8 @@ brew install --cask lglot/tap/translatekit
 ### Build from source
 
 ```bash
-git clone https://github.com/lglot/TranslateKit.git
-cd TranslateKit
+git clone https://github.com/lglot/translate-kit.git
+cd translate-kit
 make install
 ```
 

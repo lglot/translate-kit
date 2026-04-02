@@ -3,7 +3,7 @@
 APP_NAME = TranslateKit
 BUILD_DIR = .build
 APP_BUNDLE = $(BUILD_DIR)/$(APP_NAME).app
-EXECUTABLE = $(BUILD_DIR)/debug/$(APP_NAME)
+EXECUTABLE = $(BUILD_DIR)/debug/translate-kit
 
 build:
 	swift build

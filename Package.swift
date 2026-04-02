@@ -8,7 +8,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "TranslateKit",
+    name: "translate-kit",
             path: "Sources",
             resources: [
                 .process("../Resources")
