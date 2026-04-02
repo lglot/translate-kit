@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import Carbon
 
 @main
 struct TranslateKitApp: App {
@@ -15,20 +14,14 @@ struct TranslateKitApp: App {
     }
 }
 
-// MARK: - AppDelegate (NOT @MainActor — @objc methods need it off)
-
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var floatingPanel: FloatingTranslationPanel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Register service provider
         NSApplication.shared.servicesProvider = ServiceProvider()
-
-        // Setup menu bar
         setupMenuBar()
 
-        // Listen for service trigger
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleServiceTrigger(_:)),
@@ -36,21 +29,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        // Setup global hotkey (⌘⇧T)
-        setupGlobalHotkey()
-
-        print("[TranslateKit] Started successfully")
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        if let monitor = globalHotkeyMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
+        print("[TranslateKit] Started")
     }
 
     // MARK: - Menu Bar
-
-    private var globalHotkeyMonitor: Any?
 
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -110,7 +92,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        // Settings
         menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
 
         menu.addItem(.separator())
@@ -126,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 440),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 520),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -152,12 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Service Handler
 
     @objc private func handleServiceTrigger(_ notification: Notification) {
-        print("[TranslateKit] Service triggered!")
-        guard let text = notification.userInfo?["text"] as? String, !text.isEmpty else {
-            print("[TranslateKit] No text received")
-            return
-        }
-        print("[TranslateKit] Text: \(text)")
+        guard let text = notification.userInfo?["text"] as? String, !text.isEmpty else { return }
         showTranslationPanel(text: text)
     }
 
@@ -165,21 +141,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showTranslationPanel(text: String) {
         DispatchQueue.main.async { [weak self] in
-            // Close previous panel
             self?.floatingPanel?.close()
 
-            let backendManager = BackendManager.shared
-            let prefs = PreferencesManager.shared
-
-            let source: Language = prefs.autoDetectSource ? .auto : .english
-            let target = prefs.targetLanguage
-
-            // Create the SwiftUI view
             let view = TranslatingView(
                 sourceText: text,
-                sourceLanguage: source,
-                targetLanguage: target,
-                backend: backendManager.activeBackend
+                sourceLanguage: PreferencesManager.shared.autoDetectSource ? .auto : .english,
+                targetLanguage: PreferencesManager.shared.targetLanguage,
+                backend: BackendManager.shared.activeBackend
             )
             let hostingView = NSHostingView(rootView: view)
 
@@ -187,23 +155,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panel.contentView = hostingView
             self?.floatingPanel = panel
             panel.presentNearCursor()
-
-            print("[TranslateKit] Panel shown")
-        }
-    }
-
-    // MARK: - Global Hotkey ⌘⇧T
-
-    private func setupGlobalHotkey() {
-        globalHotkeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.modifierFlags.contains([.command, .shift]) && event.keyCode == 0x11 {
-                DispatchQueue.main.async {
-                    let pb = NSPasteboard.general
-                    if let text = pb.string(forType: .string), !text.isEmpty {
-                        self?.showTranslationPanel(text: text)
-                    }
-                }
-            }
         }
     }
 }

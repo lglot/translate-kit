@@ -20,7 +20,6 @@ A lightweight macOS menu bar app that adds **"Translate" to your right-click con
   - 🔵 **DeepL** — free API key (500k chars/month)
   - 🟢 **Google Cloud** — requires API key
 - **Menu bar icon** for quick settings
-- **Global hotkey** `⌘⇧T` to translate clipboard
 - **Auto-detect** source language
 - **25+ target languages** with flag emojis
 - API keys stored in **macOS Keychain**
@@ -52,14 +51,10 @@ Then **log out and back in** (or run `make refresh-services`) for the Service to
 
 ### Menu Bar
 
-Click the 🌐 icon to:
+Click the menu bar icon to:
 - Switch translation engine
 - Change target language
 - Open Settings
-
-### Keyboard
-
-Press **`⌘⇧T`** to translate current clipboard content.
 
 ## Translation Engines
 
