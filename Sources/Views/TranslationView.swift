@@ -1,20 +1,14 @@
 import SwiftUI
-import Translation
 
 struct TranslatingView: View {
     let sourceText: String
-    let sourceLanguage: Language
-    let targetLanguage: Language
-    let backend: TranslationBackend
+    var onSizeChange: ((CGSize) -> Void)? = nil
 
     @State private var translatedText: String = ""
     @State private var errorMessage: String?
     @State private var isLoading: Bool = true
-    @State private var detectedLanguage: Language?
-
-    private var isAppleBackend: Bool {
-        backend.id == "apple"
-    }
+    @State private var target: Language?
+    @State private var targetOverride: Language?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -26,30 +20,16 @@ struct TranslatingView: View {
         }
         .background(VisualEffectBackground())
         .frame(width: 480)
-        .task {
-            if isAppleBackend {
-                if #available(macOS 15.0, *) {
-                    // Apple Translation handled by AppleTranslationHost below
-                } else {
-                    errorMessage = "Apple Translation requires macOS 15+"
-                    isLoading = false
-                }
-            } else {
-                await translateWithHTTP()
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: ViewSizeKey.self, value: proxy.size)
             }
+        )
+        .onPreferenceChange(ViewSizeKey.self) { size in
+            onSizeChange?(size)
         }
-        .overlay {
-            if isAppleBackend, #available(macOS 15.0, *) {
-                AppleTranslationHost(
-                    text: sourceText,
-                    source: sourceLanguage,
-                    target: targetLanguage,
-                    translatedText: $translatedText,
-                    isLoading: $isLoading,
-                    errorMessage: $errorMessage
-                )
-                .allowsHitTesting(false)
-            }
+        .task {
+            await translate()
         }
     }
 
@@ -64,9 +44,29 @@ struct TranslatingView: View {
             Text("TranslateKit")
                 .font(.system(size: 13, weight: .semibold))
             Spacer()
-            Text("\(targetLanguage.flag) \(targetLanguage.displayName)")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+
+            Menu {
+                ForEach(Language.targetLanguages) { lang in
+                    Button {
+                        guard lang != target else { return }
+                        targetOverride = lang
+                        Task { await translate() }
+                    } label: {
+                        if lang == target {
+                            Label("\(lang.flag) \(lang.displayName)", systemImage: "checkmark")
+                        } else {
+                            Text("\(lang.flag) \(lang.displayName)")
+                        }
+                    }
+                }
+            } label: {
+                if let target {
+                    Text("\(target.flag) \(target.displayName)")
+                        .font(.system(size: 11))
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
 
             Button {
                 NSApp.keyWindow?.close()
@@ -87,20 +87,21 @@ struct TranslatingView: View {
     @ViewBuilder
     private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Source
             VStack(alignment: .leading, spacing: 4) {
                 Text("ORIGINAL")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.tertiary)
-                Text(sourceText)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .lineLimit(4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                ScrollView {
+                    Text(sourceText)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 140)
+                .fixedSize(horizontal: false, vertical: true)
             }
 
-            // Translation
             VStack(alignment: .leading, spacing: 4) {
                 Text("TRANSLATION")
                     .font(.system(size: 10, weight: .medium))
@@ -124,10 +125,14 @@ struct TranslatingView: View {
                         }
                         .frame(maxWidth: .infinity, minHeight: 50)
                     } else {
-                        Text(translatedText)
-                            .font(.system(size: 15, weight: .medium))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, minHeight: 50, alignment: .topLeading)
+                        ScrollView {
+                            Text(translatedText)
+                                .font(.system(size: 15, weight: .medium))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                        }
+                        .frame(maxHeight: 320)
+                        .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(10)
@@ -144,7 +149,8 @@ struct TranslatingView: View {
     @ViewBuilder
     private var footer: some View {
         HStack {
-            Label(backend.name, systemImage: isAppleBackend ? "apple.logo" : "cloud")
+            let backend = BackendManager.shared.activeBackend
+            Label(backend.name, systemImage: backend.id == "apple" ? "apple.logo" : "cloud")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
 
@@ -164,14 +170,21 @@ struct TranslatingView: View {
         .padding(.vertical, 10)
     }
 
-    // MARK: - HTTP Translation
+    // MARK: - Translation
 
-    private func translateWithHTTP() async {
+    private func translate() async {
+        await MainActor.run {
+            withAnimation {
+                isLoading = true
+                errorMessage = nil
+            }
+        }
         do {
-            let result = try await backend.translate(sourceText, from: sourceLanguage, to: targetLanguage)
+            let result = try await TranslationCoordinator.translate(sourceText, targetOverride: targetOverride)
             await MainActor.run {
                 withAnimation {
                     translatedText = result.translatedText
+                    target = result.targetLanguage
                     isLoading = false
                 }
             }
@@ -186,47 +199,10 @@ struct TranslatingView: View {
     }
 }
 
-// MARK: - Apple Translation Host (macOS 15+)
-
-@available(macOS 15.0, *)
-struct AppleTranslationHost: View {
-    let text: String
-    let source: Language
-    let target: Language
-
-    @Binding var translatedText: String
-    @Binding var isLoading: Bool
-    @Binding var errorMessage: String?
-
-    @State private var config: TranslationSession.Configuration?
-
-    var body: some View {
-        Color.clear
-            .frame(width: 0, height: 0)
-            .task {
-                config = TranslationSession.Configuration(
-                    source: source == .auto ? nil : Locale.Language(identifier: source.rawValue),
-                    target: Locale.Language(identifier: target.rawValue)
-                )
-            }
-            .translationTask(config) { session in
-                do {
-                    let response = try await session.translate(text)
-                    await MainActor.run {
-                        withAnimation {
-                            translatedText = response.targetText
-                            isLoading = false
-                        }
-                    }
-                } catch {
-                    await MainActor.run {
-                        withAnimation {
-                            errorMessage = error.localizedDescription
-                            isLoading = false
-                        }
-                    }
-                }
-            }
+struct ViewSizeKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = nextValue()
     }
 }
 

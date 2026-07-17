@@ -102,4 +102,8 @@ enum Language: String, CaseIterable, Identifiable, Codable {
     static var targetLanguages: [Language] {
         allCases.filter { $0 != .auto }
     }
+
+    var localeLanguage: Locale.Language {
+        Locale.Language(identifier: rawValue)
+    }
 }

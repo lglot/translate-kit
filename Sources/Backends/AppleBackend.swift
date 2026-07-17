@@ -11,6 +11,15 @@ struct AppleBackend: TranslationBackend {
         from source: Language,
         to target: Language
     ) async throws -> TranslationResult {
-        throw TranslationError.backendUnavailable("Apple Translation uses SwiftUI integration")
+        let effectiveSource: Language? = source == .auto ? nil : source
+        let translated = try await AppleTranslationProvider.shared.translate(
+            text, from: effectiveSource, to: target)
+        return TranslationResult(
+            sourceText: text,
+            translatedText: translated,
+            sourceLanguage: source,
+            targetLanguage: target,
+            backend: name
+        )
     }
 }

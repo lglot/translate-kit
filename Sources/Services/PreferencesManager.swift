@@ -5,8 +5,13 @@ final class PreferencesManager: ObservableObject {
 
     private let defaults = UserDefaults.standard
 
-    @Published var targetLanguage: Language {
-        didSet { defaults.set(targetLanguage.rawValue, forKey: Keys.targetLanguage) }
+    /// Language pair: text detected as `first` is translated to `second` and vice versa.
+    @Published var firstLanguage: Language {
+        didSet { defaults.set(firstLanguage.rawValue, forKey: Keys.firstLanguage) }
+    }
+
+    @Published var secondLanguage: Language {
+        didSet { defaults.set(secondLanguage.rawValue, forKey: Keys.secondLanguage) }
     }
 
     @Published var activeBackendID: String {
@@ -21,30 +26,37 @@ final class PreferencesManager: ObservableObject {
         didSet { defaults.set(showMenuBarIcon, forKey: Keys.showMenuBarIcon) }
     }
 
-    @Published var autoDetectSource: Bool {
-        didSet { defaults.set(autoDetectSource, forKey: Keys.autoDetectSource) }
-    }
-
     @Published var deeplIsPro: Bool {
         didSet { defaults.set(deeplIsPro, forKey: Keys.deeplIsPro) }
     }
 
+    @Published var hasCompletedOnboarding: Bool {
+        didSet { defaults.set(hasCompletedOnboarding, forKey: Keys.hasCompletedOnboarding) }
+    }
+
+    var languagePair: LanguagePair {
+        LanguagePair(first: firstLanguage, second: secondLanguage)
+    }
+
     private init() {
-        let rawTarget = defaults.string(forKey: Keys.targetLanguage) ?? "it"
-        self.targetLanguage = Language(rawValue: rawTarget) ?? .italian
-        self.activeBackendID = defaults.string(forKey: Keys.activeBackend) ?? "google-web"
+        let first = defaults.string(forKey: Keys.firstLanguage) ?? "it"
+        let second = defaults.string(forKey: Keys.secondLanguage) ?? "en"
+        self.firstLanguage = Language(rawValue: first) ?? .italian
+        self.secondLanguage = Language(rawValue: second) ?? .english
+        self.activeBackendID = defaults.string(forKey: Keys.activeBackend) ?? "apple"
         self.launchAtLogin = defaults.bool(forKey: Keys.launchAtLogin)
         self.showMenuBarIcon = defaults.object(forKey: Keys.showMenuBarIcon) as? Bool ?? true
-        self.autoDetectSource = defaults.object(forKey: Keys.autoDetectSource) as? Bool ?? true
         self.deeplIsPro = defaults.bool(forKey: Keys.deeplIsPro)
+        self.hasCompletedOnboarding = defaults.bool(forKey: Keys.hasCompletedOnboarding)
     }
 
     private enum Keys {
-        static let targetLanguage = "targetLanguage"
+        static let firstLanguage = "firstLanguage"
+        static let secondLanguage = "secondLanguage"
         static let activeBackend = "activeBackend"
         static let launchAtLogin = "launchAtLogin"
         static let showMenuBarIcon = "showMenuBarIcon"
-        static let autoDetectSource = "autoDetectSource"
         static let deeplIsPro = "deeplIsPro"
+        static let hasCompletedOnboarding = "hasCompletedOnboarding"
     }
 }

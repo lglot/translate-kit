@@ -7,19 +7,21 @@
     <key>CFBundleIdentifier</key>
     <string>com.translatekit.app</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>2.0.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
     <string>TranslateKit</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>15.0</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>LSUIElement</key>
     <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
     <key>NSServices</key>
     <array>
         <dict>
@@ -36,11 +38,6 @@
             <array>
                 <string>public.plain-text</string>
             </array>
-            <key>NSKeyEquivalent</key>
-            <dict>
-                <key>default</key>
-                <string>T</string>
-            </dict>
             <key>NSRestricted</key>
             <false/>
             <key>NSRequiredContext</key>

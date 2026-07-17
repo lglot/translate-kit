@@ -1,5 +1,7 @@
 import SwiftUI
 import ServiceManagement
+import KeyboardShortcuts
+import Translation
 
 struct SettingsView: View {
     var onDone: (() -> Void)? = nil
@@ -9,41 +11,83 @@ struct SettingsView: View {
 
     @State private var deeplAPIKey = ""
     @State private var googleCloudAPIKey = ""
-    @State private var selectedBackendID = "google-web"
+    @State private var selectedBackendID = "apple"
     @State private var showingSaved = false
+    @State private var accessibilityGranted = AccessibilityPermission.isGranted
+
+    private let permissionTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 0) {
-            // Content
             Form {
                 Section("General") {
                     Toggle("Launch at login", isOn: $preferences.launchAtLogin)
-                        .onChange(of: preferences.launchAtLogin) { newValue in
+                        .onChange(of: preferences.launchAtLogin) { _, newValue in
                             toggleLaunchAtLogin(enabled: newValue)
                         }
 
                     Toggle("Show menu bar icon", isOn: $preferences.showMenuBarIcon)
-
-                    Toggle("Auto-detect source language", isOn: $preferences.autoDetectSource)
                 }
 
-                Section("Translation") {
-                    Picker("Target language:", selection: $preferences.targetLanguage) {
+                Section("Hotkeys") {
+                    KeyboardShortcuts.Recorder("Translate selection (popup):", name: .translateRead)
+                    KeyboardShortcuts.Recorder("Translate & replace in place:", name: .translateReplace)
+
+                    LabeledContent("Accessibility permission") {
+                        if accessibilityGranted {
+                            Label("Granted", systemImage: "checkmark.circle.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.green)
+                        } else {
+                            HStack(spacing: 6) {
+                                Label("Required for hotkeys", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.orange)
+                                Button("Open System Settings") {
+                                    AccessibilityPermission.request()
+                                    AccessibilityPermission.openSystemSettings()
+                                }
+                            }
+                        }
+                    }
+                    .onReceive(permissionTimer) { _ in
+                        accessibilityGranted = AccessibilityPermission.isGranted
+                    }
+                }
+
+                Section("Languages") {
+                    Picker("Your language:", selection: $preferences.firstLanguage) {
                         ForEach(Language.targetLanguages) { lang in
                             Text("\(lang.flag) \(lang.displayName)").tag(lang)
                         }
                     }
+                    Picker("Other language:", selection: $preferences.secondLanguage) {
+                        ForEach(Language.targetLanguages) { lang in
+                            Text("\(lang.flag) \(lang.displayName)").tag(lang)
+                        }
+                    }
+                    Text("Text detected as one language is translated to the other, in both directions.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
 
-                    Picker("Translation engine:", selection: $selectedBackendID) {
+                    AppleModelStatusView()
+                }
+
+                Section("Translation Engine") {
+                    Picker("Engine:", selection: $selectedBackendID) {
                         ForEach(backendManager.backends, id: \.id) { backend in
                             Text(backend.name).tag(backend.id)
                         }
                     }
-                    .onChange(of: selectedBackendID) { newID in
+                    .onChange(of: selectedBackendID) { _, newID in
                         if let backend = backendManager.backends.first(where: { $0.id == newID }) {
                             backendManager.setActive(backend)
                         }
                     }
+
+                    Text("Apple translates on-device: your text never leaves the Mac. DeepL and Google Cloud send text to their servers.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("API Keys") {
@@ -87,7 +131,6 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
 
-            // Done button at bottom
             HStack {
                 Spacer()
                 Button("Done") { onDone?() }
@@ -111,6 +154,7 @@ struct SettingsView: View {
             KeychainHelper.set(value, for: keychainKey)
         }
         backendManager.reload()
+        selectedBackendID = backendManager.activeBackendID
         showSavedConfirmation()
     }
 
@@ -122,15 +166,76 @@ struct SettingsView: View {
     }
 
     private func toggleLaunchAtLogin(enabled: Bool) {
-        if #available(macOS 13.0, *) {
-            do {
-                if enabled {
-                    try SMAppService.mainApp.register()
-                } else {
-                    try SMAppService.mainApp.unregister()
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            NSLog("[TranslateKit] Launch at login error: \(error.localizedDescription)")
+        }
+    }
+}
+
+/// Shows whether the on-device Apple model for the configured pair is
+/// installed, and triggers the system download sheet when it is not.
+struct AppleModelStatusView: View {
+    @EnvironmentObject private var preferences: PreferencesManager
+
+    @State private var statusText = "Checking..."
+    @State private var needsDownload = false
+    @State private var downloadConfig: TranslationSession.Configuration?
+
+    var body: some View {
+        LabeledContent("Apple language pack") {
+            HStack(spacing: 6) {
+                Text(statusText)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                if needsDownload {
+                    Button("Download...") {
+                        downloadConfig = TranslationSession.Configuration(
+                            source: preferences.firstLanguage.localeLanguage,
+                            target: preferences.secondLanguage.localeLanguage
+                        )
+                    }
                 }
+            }
+        }
+        .translationTask(downloadConfig) { session in
+            do {
+                try await session.prepareTranslation()
             } catch {
-                print("[TranslateKit] Launch at login error: \(error)")
+                // user cancelled the download sheet: status refresh below reflects it
+            }
+            await refresh()
+        }
+        .task(id: "\(preferences.firstLanguage.rawValue)-\(preferences.secondLanguage.rawValue)") {
+            await refresh()
+        }
+    }
+
+    private func refresh() async {
+        let availability = LanguageAvailability()
+        let status = await availability.status(
+            from: preferences.firstLanguage.localeLanguage,
+            to: preferences.secondLanguage.localeLanguage
+        )
+        await MainActor.run {
+            switch status {
+            case .installed:
+                statusText = "Installed"
+                needsDownload = false
+            case .supported:
+                statusText = "Not downloaded"
+                needsDownload = true
+            case .unsupported:
+                statusText = "Pair not supported on-device"
+                needsDownload = false
+            @unknown default:
+                statusText = "Unknown"
+                needsDownload = false
             }
         }
     }

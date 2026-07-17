@@ -32,6 +32,9 @@ enum TranslationError: LocalizedError {
     case rateLimited
     case apiKeyMissing(String)
     case backendUnavailable(String)
+    case modelNotDownloaded(Language, Language)
+    case noTextSelected
+    case secureInputActive
 
     var errorDescription: String? {
         switch self {
@@ -49,6 +52,12 @@ enum TranslationError: LocalizedError {
             return "API key not configured for \(backend). Add it in Settings."
         case .backendUnavailable(let backend):
             return "\(backend) is not available on this system."
+        case .modelNotDownloaded(let source, let target):
+            return "Language pack \(source.displayName) to \(target.displayName) is not downloaded. Open Settings > Languages to download it."
+        case .noTextSelected:
+            return "No text selected"
+        case .secureInputActive:
+            return "A secure input field is active. Translation is disabled for passwords."
         }
     }
 }

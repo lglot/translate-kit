@@ -48,6 +48,24 @@ final class FloatingTranslationPanel: NSPanel, NSWindowDelegate {
         makeKey()
     }
 
+    /// Resizes the panel to fit its SwiftUI content, keeping the top-left
+    /// corner anchored so the panel grows downward, then clamps the frame back
+    /// inside the visible screen area.
+    func updateContentSize(_ size: CGSize) {
+        guard size.width > 0, size.height > 0, size != frame.size else { return }
+        let topLeft = NSPoint(x: frame.minX, y: frame.maxY)
+        setContentSize(size)
+        setFrameTopLeftPoint(topLeft)
+
+        guard let screenFrame = screen?.visibleFrame ?? NSScreen.main?.visibleFrame else { return }
+        var origin = frame.origin
+        origin.x = max(screenFrame.minX + 8, min(origin.x, screenFrame.maxX - frame.width - 8))
+        origin.y = max(screenFrame.minY + 8, min(origin.y, screenFrame.maxY - frame.height - 8))
+        if origin != frame.origin {
+            setFrameOrigin(origin)
+        }
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
