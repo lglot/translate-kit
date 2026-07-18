@@ -10,12 +10,33 @@ let package = Package(
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "3.0.1")
     ],
     targets: [
+        .target(
+            name: "TranslateKitCore",
+            path: "Sources/TranslateKitCore",
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
+        ),
+        .target(
+            name: "TranslateKitApple",
+            dependencies: ["TranslateKitCore"],
+            path: "Sources/TranslateKitApple",
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
+        ),
         .executableTarget(
             name: "TranslateKit",
             dependencies: [
+                "TranslateKitCore",
+                "TranslateKitApple",
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts")
             ],
             path: "Sources",
+            exclude: [
+                "TranslateKitCore",
+                "TranslateKitApple"
+            ],
             resources: [
                 .process("../Resources")
             ],
@@ -25,7 +46,7 @@ let package = Package(
         ),
         .testTarget(
             name: "TranslateKitTests",
-            dependencies: ["TranslateKit"],
+            dependencies: ["TranslateKit", "TranslateKitCore", "TranslateKitApple"],
             path: "Tests",
             swiftSettings: [
                 .swiftLanguageMode(.v5)

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Translation
+import TranslateKitCore
 
 /// Runs Apple's `TranslationSession` outside any visible UI.
 ///

@@ -1,5 +1,5 @@
 import XCTest
-@testable import TranslateKit
+@testable import TranslateKitCore
 
 final class LanguagePairTests: XCTestCase {
     let pair = LanguagePair(first: .italian, second: .english)

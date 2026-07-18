@@ -1,6 +1,6 @@
 import Foundation
 
-protocol TranslationBackend: Sendable {
+public protocol TranslationBackend: Sendable {
     var id: String { get }
     var name: String { get }
     var requiresAPIKey: Bool { get }

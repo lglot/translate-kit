@@ -1,14 +1,14 @@
 import Foundation
 
-struct TranslationResult: Sendable {
-    let sourceText: String
-    let translatedText: String
-    let sourceLanguage: Language
-    let targetLanguage: Language
-    let backend: String
-    let characterCount: Int
+public struct TranslationResult: Sendable {
+    public let sourceText: String
+    public let translatedText: String
+    public let sourceLanguage: Language
+    public let targetLanguage: Language
+    public let backend: String
+    public let characterCount: Int
 
-    init(
+    public init(
         sourceText: String,
         translatedText: String,
         sourceLanguage: Language,
@@ -24,7 +24,7 @@ struct TranslationResult: Sendable {
     }
 }
 
-enum TranslationError: LocalizedError {
+public enum TranslationError: LocalizedError {
     case noInternet
     case apiError(String)
     case unsupportedLanguage(String)
@@ -36,7 +36,7 @@ enum TranslationError: LocalizedError {
     case noTextSelected
     case secureInputActive
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .noInternet:
             return "No internet connection"

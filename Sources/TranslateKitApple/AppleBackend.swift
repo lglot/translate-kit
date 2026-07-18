@@ -1,12 +1,15 @@
 import Foundation
+import TranslateKitCore
 
-struct AppleBackend: TranslationBackend {
-    let id = "apple"
-    let name = "Apple (On-Device)"
-    let requiresAPIKey = false
-    var isAvailable: Bool { true }
+public struct AppleBackend: TranslationBackend {
+    public let id = "apple"
+    public let name = "Apple (On-Device)"
+    public let requiresAPIKey = false
+    public var isAvailable: Bool { true }
 
-    func translate(
+    public init() {}
+
+    public func translate(
         _ text: String,
         from source: Language,
         to target: Language
