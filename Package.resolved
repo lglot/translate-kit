@@ -1,5 +1,5 @@
 {
-  "originHash" : "256fc41597e933785626dc2de051ccbf7cae8e8808862d62838c416ed257e438",
+  "originHash" : "18d24f688f4fce70f810be3a44ff1042d231b476e6e2b654d005d3baa4289e38",
   "pins" : [
     {
       "identity" : "keyboardshortcuts",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "49c3fc04ea827f816df67843bfcc57286b47ff06",
         "version" : "3.0.1"
+      }
+    },
+    {
+      "identity" : "swift-toml",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/mattt/swift-toml.git",
+      "state" : {
+        "revision" : "827506c90475e82d5a7f191f950fb3025cbdc0d6",
+        "version" : "2.0.0"
       }
     }
   ],

@@ -7,11 +7,15 @@ let package = Package(
         .macOS(.v15)
     ],
     dependencies: [
-        .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "3.0.1")
+        .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "3.0.1"),
+        .package(url: "https://github.com/mattt/swift-toml.git", exact: "2.0.0")
     ],
     targets: [
         .target(
             name: "TranslateKitCore",
+            dependencies: [
+                .product(name: "TOML", package: "swift-toml")
+            ],
             path: "Sources/TranslateKitCore",
             swiftSettings: [
                 .swiftLanguageMode(.v5)
