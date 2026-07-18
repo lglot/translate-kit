@@ -259,9 +259,15 @@ public struct CredentialResolver: Sendable {
 
     private func awsProfileNames() throws -> [String] {
         let awsDirectory = homeDirectory.appendingPathComponent(".aws", isDirectory: true)
+        let configURL = firstEnvironmentValue(["AWS_CONFIG_FILE"])
+            .map { URL(fileURLWithPath: $0) }
+            ?? awsDirectory.appendingPathComponent("config")
+        let credentialsURL = firstEnvironmentValue(["AWS_SHARED_CREDENTIALS_FILE"])
+            .map { URL(fileURLWithPath: $0) }
+            ?? awsDirectory.appendingPathComponent("credentials")
         var names = Set<String>()
-        try collectProfiles(from: awsDirectory.appendingPathComponent("config"), configFile: true, into: &names)
-        try collectProfiles(from: awsDirectory.appendingPathComponent("credentials"), configFile: false, into: &names)
+        try collectProfiles(from: configURL, configFile: true, into: &names)
+        try collectProfiles(from: credentialsURL, configFile: false, into: &names)
         return names.sorted()
     }
 

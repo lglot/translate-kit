@@ -8,13 +8,16 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "3.0.1"),
-        .package(url: "https://github.com/mattt/swift-toml.git", exact: "2.0.0")
+        .package(url: "https://github.com/mattt/swift-toml.git", exact: "2.0.0"),
+        .package(url: "https://github.com/awslabs/aws-sdk-swift.git", exact: "1.7.4")
     ],
     targets: [
         .target(
             name: "TranslateKitCore",
             dependencies: [
-                .product(name: "TOML", package: "swift-toml")
+                .product(name: "TOML", package: "swift-toml"),
+                .product(name: "AWSTranslate", package: "aws-sdk-swift"),
+                .product(name: "AWSSDKIdentity", package: "aws-sdk-swift")
             ],
             path: "Sources/TranslateKitCore",
             swiftSettings: [
