@@ -7,3 +7,5 @@ typealias TranslationBackend = TranslateKitCore.TranslationBackend
 typealias TranslationError = TranslateKitCore.TranslationError
 typealias TranslationResult = TranslateKitCore.TranslationResult
 typealias AppleBackend = TranslateKitApple.AppleBackend
+typealias DeepLBackend = TranslateKitCore.DeepLBackend
+typealias GoogleCloudBackend = TranslateKitCore.GoogleCloudBackend

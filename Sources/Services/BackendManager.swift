@@ -19,12 +19,15 @@ final class BackendManager: ObservableObject {
     func reload() {
         var available: [TranslationBackend] = [AppleBackend()]
 
-        if KeychainHelper.get("deepl_api_key") != nil {
-            available.append(DeepLBackend())
+        if let key = KeychainHelper.get("deepl_api_key") {
+            available.append(DeepLBackend(
+                credential: .apiKey(key),
+                configuration: .init(plan: preferences.deeplIsPro ? "pro" : "free")
+            ))
         }
 
-        if KeychainHelper.get("google_cloud_api_key") != nil {
-            available.append(GoogleCloudBackend())
+        if let key = KeychainHelper.get("google_cloud_api_key") {
+            available.append(GoogleCloudBackend(credential: .apiKey(key)))
         }
 
         backends = available

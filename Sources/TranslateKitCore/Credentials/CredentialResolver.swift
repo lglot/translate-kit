@@ -311,3 +311,15 @@ public enum CredentialResolverError: LocalizedError, Equatable {
         }
     }
 }
+
+extension ProviderCredential {
+    var isAPIKey: Bool {
+        if case .apiKey = self { return true }
+        return false
+    }
+
+    var isBearerToken: Bool {
+        if case .bearerToken = self { return true }
+        return false
+    }
+}
