@@ -1,47 +1,51 @@
 import Foundation
+import TranslateKitApple
+import TranslateKitCore
 
+@MainActor
 final class BackendManager: ObservableObject {
-    static let shared = BackendManager()
+    static let shared = BackendManager(
+        preferences: PreferencesManager.shared,
+        registry: ProviderRegistry(appleBackendFactory: { AppleBackend() })
+    )
 
-    @Published var backends: [TranslationBackend] = []
-    @Published var activeBackendID: String = "apple"
+    @Published private(set) var providers: [ProviderState]
+    @Published private(set) var activeBackendID: String
 
-    private let preferences = PreferencesManager.shared
+    private let preferences: PreferencesManager
+    private let registry: ProviderRegistry
 
-    var activeBackend: TranslationBackend {
-        backends.first { $0.id == activeBackendID } ?? AppleBackend()
+    var activeProvider: ProviderDescriptor {
+        providers.first { $0.descriptor.id.rawValue == activeBackendID }?.descriptor
+            ?? ProviderRegistry.descriptors[0]
     }
 
-    private init() {
-        reload()
-    }
-
-    func reload() {
-        var available: [TranslationBackend] = [AppleBackend()]
-
-        if let key = KeychainHelper.get("deepl_api_key") {
-            available.append(DeepLBackend(
-                credential: .apiKey(key),
-                configuration: .init(plan: preferences.deeplIsPro ? "pro" : "free")
-            ))
+    init(preferences: PreferencesManager, registry: ProviderRegistry) {
+        self.preferences = preferences
+        self.registry = registry
+        activeBackendID = preferences.activeBackendID
+        providers = ProviderRegistry.descriptors.map { descriptor in
+            ProviderState(
+                descriptor: descriptor,
+                isConfigured: descriptor.id == .apple || descriptor.id == .libretranslate,
+                credentialSources: [.none]
+            )
         }
 
-        if let key = KeychainHelper.get("google_cloud_api_key") {
-            available.append(GoogleCloudBackend(credential: .apiKey(key)))
-        }
-
-        backends = available
-
-        if available.contains(where: { $0.id == preferences.activeBackendID }) {
-            activeBackendID = preferences.activeBackendID
-        } else {
-            activeBackendID = "apple"
-            preferences.activeBackendID = "apple"
+        Task { [weak self] in
+            await self?.reload()
         }
     }
 
-    func setActive(_ backend: TranslationBackend) {
-        activeBackendID = backend.id
-        preferences.activeBackendID = backend.id
+    func reload() async {
+        guard let configuration = try? preferences.validatedConfiguration() else { return }
+        providers = await registry.states(configuration: configuration)
+        activeBackendID = preferences.activeBackendID
+    }
+
+    func setActive(_ provider: ProviderID) {
+        guard ProviderRegistry.descriptors.contains(where: { $0.id == provider }) else { return }
+        preferences.activeBackendID = provider.rawValue
+        activeBackendID = preferences.activeBackendID
     }
 }

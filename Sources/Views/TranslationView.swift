@@ -149,8 +149,11 @@ struct TranslatingView: View {
     @ViewBuilder
     private var footer: some View {
         HStack {
-            let backend = BackendManager.shared.activeBackend
-            Label(backend.name, systemImage: backend.id == "apple" ? "apple.logo" : "cloud")
+            let provider = BackendManager.shared.activeProvider
+            Label(
+                provider.name,
+                systemImage: provider.id == .apple ? "apple.logo" : "cloud"
+            )
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
 

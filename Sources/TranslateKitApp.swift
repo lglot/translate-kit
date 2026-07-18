@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import ServiceManagement
 import KeyboardShortcuts
+import TranslateKitCore
 
 @main
 struct TranslateKitApp: App {
@@ -50,6 +51,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !PreferencesManager.shared.hasCompletedOnboarding {
             showOnboarding()
         }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        PreferencesManager.shared.reloadConfiguration()
+        Task { await BackendManager.shared.reload() }
     }
 
     // Open Settings when launched from Spotlight / double-click
@@ -131,14 +137,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Engine
         let engineItem = NSMenuItem(title: "Engine", action: nil, keyEquivalent: "")
         let engineSubmenu = NSMenu()
-        for backend in BackendManager.shared.backends {
+        for state in BackendManager.shared.providers {
+            let provider = state.descriptor
             let item = NSMenuItem(
-                title: backend.name,
+                title: provider.name,
                 action: #selector(setEngine(_:)),
                 keyEquivalent: ""
             )
-            item.representedObject = backend.id
-            item.state = backend.id == BackendManager.shared.activeBackendID ? .on : .off
+            item.representedObject = provider.id.rawValue
+            item.state = provider.id.rawValue == BackendManager.shared.activeBackendID ? .on : .off
             engineSubmenu.addItem(item)
         }
         engineItem.submenu = engineSubmenu
@@ -172,9 +179,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func setEngine(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String,
-              let backend = BackendManager.shared.backends.first(where: { $0.id == id }) else { return }
-        BackendManager.shared.setActive(backend)
+        guard let value = sender.representedObject as? String,
+              let provider = TranslateKitCore.ProviderID(rawValue: value) else { return }
+        BackendManager.shared.setActive(provider)
     }
 
     @objc private func openAccessibilitySettings() {
