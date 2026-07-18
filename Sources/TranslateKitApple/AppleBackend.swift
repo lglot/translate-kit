@@ -15,12 +15,12 @@ public struct AppleBackend: TranslationBackend {
         to target: Language
     ) async throws -> TranslationResult {
         let effectiveSource: Language? = source == .auto ? nil : source
-        let translated = try await AppleTranslationProvider.shared.translate(
+        let output = try await AppleTranslationProvider.shared.translate(
             text, from: effectiveSource, to: target)
         return TranslationResult(
             sourceText: text,
-            translatedText: translated,
-            sourceLanguage: source,
+            translatedText: output.text,
+            sourceLanguage: output.sourceLanguage,
             targetLanguage: target,
             backend: name
         )

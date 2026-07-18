@@ -26,6 +26,15 @@ public struct Language: RawRepresentable, Hashable, Identifiable, Codable, Senda
         self.rawValue = canonical
     }
 
+    public init?(localeLanguage: Locale.Language) {
+        var identifier = localeLanguage.minimalIdentifier
+        if let region = localeLanguage.region?.identifier,
+           !identifier.split(separator: "-").contains(Substring(region)) {
+            identifier += "-\(region)"
+        }
+        self.init(rawValue: identifier)
+    }
+
     public var id: String { rawValue }
     public var isValidTarget: Bool { self != .auto }
 

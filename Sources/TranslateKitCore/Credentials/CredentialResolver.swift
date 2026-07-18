@@ -1,5 +1,14 @@
 import Foundation
 
+public protocol CredentialResolving: Sendable {
+    func resolve(
+        for provider: ProviderID,
+        configuration: TranslateKitConfiguration
+    ) async throws -> ProviderCredential
+
+    func discover(provider: ProviderID) async throws -> CredentialDiscovery
+}
+
 public enum ProviderCredential: Equatable, Sendable {
     case apiKey(String)
     case bearerToken(String)
@@ -38,7 +47,7 @@ public struct CredentialDiscovery: Codable, Equatable, Sendable {
     }
 }
 
-public struct CredentialResolver: Sendable {
+public struct CredentialResolver: CredentialResolving, Sendable {
     private let secretStore: any SecretStore
     private let environment: [String: String]
     private let processRunner: any ProcessRunning

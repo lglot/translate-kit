@@ -3,6 +3,11 @@ import SwiftUI
 import Translation
 import TranslateKitCore
 
+struct AppleTranslationOutput: Sendable {
+    let text: String
+    let sourceLanguage: Language
+}
+
 /// Runs Apple's `TranslationSession` outside any visible UI.
 ///
 /// The Translation framework only exposes sessions through the SwiftUI
@@ -19,7 +24,7 @@ final class AppleTranslationProvider: ObservableObject {
         let text: String
         let source: Language?
         let target: Language
-        let continuation: CheckedContinuation<String, Error>
+        let continuation: CheckedContinuation<AppleTranslationOutput, Error>
     }
 
     private var queue: [Request] = []
@@ -29,7 +34,11 @@ final class AppleTranslationProvider: ObservableObject {
 
     private init() {}
 
-    func translate(_ text: String, from source: Language?, to target: Language) async throws -> String {
+    func translate(
+        _ text: String,
+        from source: Language?,
+        to target: Language
+    ) async throws -> AppleTranslationOutput {
         ensureHostWindow()
 
         if let source {
@@ -69,7 +78,10 @@ final class AppleTranslationProvider: ObservableObject {
             timeouts.removeValue(forKey: request.id)?.cancel()
             do {
                 let response = try await session.translate(request.text)
-                request.continuation.resume(returning: response.targetText)
+                request.continuation.resume(returning: AppleTranslationOutput(
+                    text: response.targetText,
+                    sourceLanguage: Language(localeLanguage: response.sourceLanguage) ?? request.source ?? .auto
+                ))
             } catch {
                 request.continuation.resume(throwing: error)
             }
@@ -113,6 +125,10 @@ final class AppleTranslationProvider: ObservableObject {
 
     private func ensureHostWindow() {
         guard hostWindow == nil else { return }
+        let application = NSApplication.shared
+        if Bundle.main.bundleURL.pathExtension.lowercased() != "app" {
+            application.setActivationPolicy(.prohibited)
+        }
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
             styleMask: [.borderless],
