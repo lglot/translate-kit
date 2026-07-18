@@ -204,6 +204,34 @@ public struct CredentialResolver: CredentialResolving, Sendable {
         try secretStore.delete(.translateKit(provider))
     }
 
+    public func storeAWSStatic(
+        accessKeyID: String,
+        secretAccessKey: String,
+        sessionToken: String? = nil
+    ) throws {
+        guard !accessKeyID.isEmpty, !secretAccessKey.isEmpty else {
+            throw CredentialResolverError.invalidAWSStaticCredential
+        }
+        do {
+            try secretStore.set(accessKeyID, for: .translateKitAccount("aws_access_key_id"))
+            try secretStore.set(secretAccessKey, for: .translateKitAccount("aws_secret_access_key"))
+            if let sessionToken, !sessionToken.isEmpty {
+                try secretStore.set(sessionToken, for: .translateKitAccount("aws_session_token"))
+            } else {
+                try secretStore.delete(.translateKitAccount("aws_session_token"))
+            }
+        } catch {
+            try? deleteAWSStatic()
+            throw error
+        }
+    }
+
+    public func deleteAWSStatic() throws {
+        try secretStore.delete(.translateKitAccount("aws_access_key_id"))
+        try secretStore.delete(.translateKitAccount("aws_secret_access_key"))
+        try secretStore.delete(.translateKitAccount("aws_session_token"))
+    }
+
     private func keyCredential(
         provider: ProviderID,
         environmentNames: [String],
@@ -318,11 +346,14 @@ public struct CredentialResolver: CredentialResolving, Sendable {
 
 public enum CredentialResolverError: LocalizedError, Equatable {
     case unsupportedSecret(ProviderID)
+    case invalidAWSStaticCredential
 
     public var errorDescription: String? {
         switch self {
         case .unsupportedSecret(let provider):
             return "Provider does not accept a single API key: \(provider.rawValue)"
+        case .invalidAWSStaticCredential:
+            return "AWS access key ID and secret access key are required"
         }
     }
 }

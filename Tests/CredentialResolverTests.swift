@@ -202,6 +202,29 @@ final class CredentialResolverTests: XCTestCase {
 
         XCTAssertEqual(credential, .awsProfile("work"))
     }
+
+    func testStoresAWSStaticCredentialsOnlyInSecretStore() async throws {
+        let store = MemorySecretStore()
+        let resolver = CredentialResolver(
+            secretStore: store,
+            environment: [:],
+            processRunner: StubProcessRunner()
+        )
+        try resolver.storeAWSStatic(
+            accessKeyID: "access",
+            secretAccessKey: "secret",
+            sessionToken: "session"
+        )
+        var configuration = TranslateKitConfiguration.default
+        configuration.providers.aws.auth = "static"
+
+        let credential = try await resolver.resolve(for: .aws, configuration: configuration)
+
+        XCTAssertEqual(
+            credential,
+            .awsStatic(accessKeyID: "access", secretAccessKey: "secret", sessionToken: "session")
+        )
+    }
 }
 
 private final class MemorySecretStore: SecretStore, @unchecked Sendable {
