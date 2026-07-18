@@ -1,14 +1,18 @@
-.PHONY: build clean run test install uninstall icon refresh-services release
+.PHONY: build clean run run-cli test install uninstall icon refresh-services release
 
 APP_NAME = TranslateKit
 BUILD_DIR = .build
 APP_BUNDLE = $(BUILD_DIR)/$(APP_NAME).app
-EXECUTABLE = $(BUILD_DIR)/debug/$(APP_NAME)
+APP_EXECUTABLE = $(BUILD_DIR)/debug/$(APP_NAME)
+CLI_EXECUTABLE = $(BUILD_DIR)/debug/tkit
 RELEASE_DIR = $(BUILD_DIR)/apple/Products/Release
 VERSION = $(shell /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
+CODE_SIGN_IDENTITY_NAME = TranslateKit Dev
+CODE_SIGN_IDENTITY = $(shell security find-identity -v -p codesigning | awk '/"$(CODE_SIGN_IDENTITY_NAME)"/ { print $$2; exit }')
 
 build:
-	swift build
+	swift build --product $(APP_NAME)
+	swift build --product tkit
 
 test:
 	swift test
@@ -21,18 +25,25 @@ icon:
 	iconutil -c icns Resources/AppIcon.iconset -o Resources/AppIcon.icns
 
 run: build
-	$(EXECUTABLE)
+	$(APP_EXECUTABLE)
+
+run-cli: build
+	$(CLI_EXECUTABLE)
 
 define make_bundle
+	@test -n "$(CODE_SIGN_IDENTITY)" || \
+		(echo "Missing valid code-signing identity: $(CODE_SIGN_IDENTITY_NAME)"; exit 1)
 	@rm -rf "$(APP_BUNDLE)"
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS"
 	@mkdir -p "$(APP_BUNDLE)/Contents/Resources"
 	@cp "$(1)/$(APP_NAME)" "$(APP_BUNDLE)/Contents/MacOS/"
+	@cp "$(1)/tkit" "$(APP_BUNDLE)/Contents/MacOS/tkit"
 	@cp "Resources/Info.plist" "$(APP_BUNDLE)/Contents/"
 	@test -f "Resources/AppIcon.icns" && cp "Resources/AppIcon.icns" "$(APP_BUNDLE)/Contents/Resources/" || true
 	@cp -R $(1)/*.resources "$(APP_BUNDLE)/Contents/Resources/" 2>/dev/null || true
 	@cp -R $(1)/*.bundle "$(APP_BUNDLE)/Contents/Resources/" 2>/dev/null || true
-	@codesign --force --deep --sign - "$(APP_BUNDLE)"
+	@codesign --force --sign "$(CODE_SIGN_IDENTITY)" "$(APP_BUNDLE)/Contents/MacOS/tkit"
+	@codesign --force --deep --sign "$(CODE_SIGN_IDENTITY)" "$(APP_BUNDLE)"
 endef
 
 install: build
@@ -43,7 +54,7 @@ install: build
 	@cp -R "$(APP_BUNDLE)" "/Applications/"
 	@echo "Installed! Run 'make refresh-services' (or log out and back in) to register the Service."
 
-# Universal release build: bundle + zip, ad-hoc signed (no Developer ID yet)
+# Universal release build: bundle + zip, signed with the stable development identity.
 release:
 	swift build -c release --arch arm64 --arch x86_64
 	$(call make_bundle,$(RELEASE_DIR))

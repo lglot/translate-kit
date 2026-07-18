@@ -4,45 +4,155 @@
   <img src="Resources/icon.png" width="80">
 </p>
 
-**Instant translation in any macOS app, in both directions.** Type in your language in any text field, press a hotkey, and the text is replaced with the translation in place. No popup, no copy-paste.
+**Instant translation in any macOS app, with a native app and the `tkit` CLI.**
 
 [![Swift](https://img.shields.io/badge/Swift-6-orange.svg)](https://swift.org)
 [![macOS](https://img.shields.io/badge/macOS-15%2B-blue.svg)](https://www.apple.com/macos/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-macOS translates selected text only in native apps, and inline translation only in Safari. TranslateKit works everywhere: Slack, Chrome, VS Code, terminals, any text field.
+TranslateKit can replace selected text in place, show a floating translation panel, expose macOS Services, or translate from a terminal. The app and CLI share the same provider and language configuration.
 
-## How it works
+## App workflow
 
-You configure a **language pair** (default Italian and English). TranslateKit detects which of the two languages the text is in and translates it to the other one. No direction to pick, ever.
+Configure a language pair, Italian and English by default. With no explicit target, TranslateKit detects which member of the pair the text uses and translates to the other one.
 
-- **⌃⌘R — Translate & replace.** Cursor in any text field: the whole field (or just your selection) is translated and replaced in place. Press again to undo. Write your email in Italian, press the hotkey, send it in English.
-- **⌃⌘T — Translate & read.** Select text anywhere: the translation appears in a floating panel near the cursor, with a language switcher and full scrollable text.
-- **Right-click → Services** also works: "Translate with TranslateKit" (popup) and "Translate and Replace with TranslateKit" (replaces the selection in place).
+- **Control-Command-R: Translate and replace.** Translate the current selection or editable field in place.
+- **Control-Command-T: Translate and read.** Show the result in a floating panel near the cursor.
+- **Services menu.** Use `Translate with TranslateKit` or `Translate and Replace with TranslateKit` from compatible macOS apps.
 
-Both hotkeys are configurable in Settings.
+Both hotkeys are configurable in Settings. Accessibility permission is required for global capture and in-place replacement.
 
-## Translation engines
+## Providers
 
-| Engine | Cost | Privacy | Setup |
-|--------|------|---------|-------|
-| **Apple (On-Device)** — default | Free | **Text never leaves your Mac** | None (language packs download once) |
-| DeepL | 500k chars/mo free | Text sent to DeepL | [Get API key](https://www.deepl.com/pro-api) |
-| Google Cloud | Paid | Text sent to Google | [Get API key](https://console.cloud.google.com/apis/credentials) |
+| Provider | Authentication | Cost boundary | Privacy |
+| --- | --- | --- | --- |
+| Apple Translation | None | Included with macOS | On-device. Text stays on the Mac. |
+| DeepL | API key | Free, trial, and paid API plans depend on account eligibility. See [current DeepL API plans](https://support.deepl.com/hc/en-us/articles/360021200939-DeepL-API-plans). | Text is sent to DeepL. |
+| Google Cloud Translation | API key or `gcloud` session | The current Basic pricing includes a monthly credit for the first 500,000 characters. See [Google pricing](https://cloud.google.com/translate/pricing). | Text is sent to Google Cloud. |
+| Azure Translator | API key or Azure CLI session | Azure currently lists an F0 free tier, subject to resource and region availability. See [Azure pricing](https://azure.microsoft.com/pricing/details/cognitive-services/translator/). | Text is sent to Azure. |
+| Amazon Translate | AWS native credential chain or Keychain static credentials | Eligible accounts can use the Amazon Translate free tier, then pay per character. See [AWS pricing](https://aws.amazon.com/translate/pricing/). | Text is sent to AWS. |
+| LibreTranslate-compatible | Optional API key | Self-hosting uses free software but consumes your hardware. Managed instances can charge. | Text is sent only to the configured server. |
 
-API keys are stored in the macOS Keychain.
+LibreTranslate is powered by Argos Translate, not an LLM. TranslateKit also accepts compatible servers such as LTEngine, whose internal model can differ. Pricing and free-tier rules can change, so verify the linked provider page before enabling billing.
+
+There is no automatic provider fallback. If the selected provider fails or lacks credentials, TranslateKit returns that error instead of sending text to another service.
+
+## Languages
+
+The Settings catalog is built from the Foundation ISO language catalog instead of a fixed Italian-English list. The CLI accepts validated BCP-47 codes such as `pt-BR`. Actual language and pair support still depends on the selected provider and, for Apple, on downloaded local models.
+
+## CLI
+
+The executable is named `tkit`. A source checkout can run it with `swift run tkit`. A packaged app contains it at:
+
+```text
+/Applications/TranslateKit.app/Contents/MacOS/tkit
+```
+
+Examples:
+
+```bash
+# Create the shared configuration file.
+tkit config init
+
+# Translate positional text using the configured pair and provider.
+tkit translate "Ciao a tutti"
+
+# Use explicit languages and provider.
+tkit translate "Bom dia" --from pt-BR --to en --provider deepl
+
+# Read text from stdin and emit stable JSON.
+printf 'Hello' | tkit translate --to it --json
+
+# Inspect providers without making a paid translation request.
+tkit providers list
+tkit providers list --json
+
+# Inspect and edit non-secret configuration.
+tkit config path
+tkit config show
+tkit config get translation.provider
+tkit config set translation.provider libretranslate
+
+# Discover credential sources without printing secret values.
+tkit config discover
+tkit config discover aws --json
+
+# Save or delete a provider key through a secure prompt or stdin.
+tkit config set-key deepl
+tkit config delete-key deepl
+```
+
+Use `--config PATH` on a concrete command to select an isolated configuration:
+
+```bash
+tkit config init --config /tmp/translate-kit.toml
+tkit translate "Hello" --to it --config /tmp/translate-kit.toml
+```
+
+Plain translation writes only the translated text and one newline to stdout. Diagnostics go to stderr. Exit codes are `2` for usage, `3` for configuration or credentials, and `1` for provider or translation failures.
+
+## Configuration
+
+The default file is `~/.config/translate-kit/config.toml`. It is created with mode `0600`, written atomically, and shared by the app and CLI.
+
+```toml
+version = 1
+
+[translation]
+provider = "apple"
+first_language = "it"
+second_language = "en"
+
+[providers.deepl]
+plan = "free"
+
+[providers.google_cloud]
+auth = "auto"
+
+[providers.azure]
+auth = "auto"
+endpoint = "https://api.cognitive.microsofttranslator.com"
+region = ""
+
+[providers.aws]
+auth = "profile"
+profile = ""
+region = ""
+
+[providers.libretranslate]
+endpoint = "http://localhost:5000"
+```
+
+TOML never contains API keys, bearer tokens, AWS access keys, secret keys, or session tokens. Unknown keys and invalid endpoints are rejected. Remote LibreTranslate endpoints require HTTPS; plain HTTP is accepted only for loopback hosts.
+
+GUI-only state such as onboarding, launch at login, and menu-bar visibility remains in `UserDefaults`. On first launch, legacy language, provider, and DeepL plan values are migrated to TOML only when the file is missing.
+
+## Credentials
+
+TranslateKit-owned secrets use macOS Keychain service `com.translatekit.app`. Existing `deepl_api_key` and `google_cloud_api_key` accounts remain compatible.
+
+Credential discovery is allowlisted and read-only:
+
+- DeepL: TranslateKit Keychain, `DEEPL_AUTH_KEY`, and the known DeepL keyring item.
+- Google: TranslateKit Keychain, API-key environment variables, or an existing `gcloud` application-default session.
+- Azure: TranslateKit Keychain, `AZURE_TRANSLATOR_KEY`, or an existing Azure CLI session.
+- AWS: standard environment and SDK credential chain, profile names from standard AWS files, SSO, login, role, and `credential_process`. Profile names and regions can be stored in TOML; secret values cannot.
+- LibreTranslate: TranslateKit Keychain or `LIBRETRANSLATE_API_KEY`.
+
+Short-lived native tokens are used in place and are never copied to TranslateKit's Keychain. `config set-key` accepts a secret from a hidden terminal prompt or stdin, never from a command-line argument.
 
 ## Installation
 
-Requires macOS 15+.
+Requires macOS 15 or later.
 
-### Homebrew
+### Homebrew app
 
 ```bash
 brew install --cask --no-quarantine lglot/tap/translatekit
 ```
 
-`--no-quarantine` is needed because releases are not yet notarized (no Apple Developer ID). If you skip it, right-click the app and choose Open the first time.
+`--no-quarantine` is currently needed because releases are not notarized. The external Homebrew metadata must be updated separately before it can expose the bundled `tkit` executable directly on `PATH`.
 
 ### Build from source
 
@@ -53,49 +163,56 @@ make install
 make refresh-services
 ```
 
-### First run
+The install and release bundles include both `TranslateKit` and the signed auxiliary `tkit` executable.
 
-1. Grant the **Accessibility permission** when prompted (System Settings → Privacy & Security → Accessibility). It is required to read the selection and replace text in other apps.
-2. Pick your language pair in Settings if it is not Italian ⇄ English.
-3. With the Apple engine, download the language pack from Settings → Languages if prompted.
+## First run
 
-## Under the hood
+1. Grant Accessibility permission in System Settings, Privacy and Security, Accessibility.
+2. Pick a language pair and provider in Settings.
+3. For Apple Translation, download the required language pack when prompted.
+4. For a cloud provider, configure native credentials or save an API key in Keychain.
 
-- Native Swift (SwiftUI + AppKit), one dependency ([KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts)).
-- Replace uses the **Accessibility API** (`AXUIElement`) where the target app supports it, and falls back to synthetic keyboard events (Cmd-A/C/V with clipboard save and restore) in apps with incomplete AX trees (Electron, Chromium).
-- Language detection is local (`NLLanguageRecognizer`, constrained to your pair).
-- Secure input fields (passwords) are always left alone.
-- The "Translate and Replace" Service is synchronous: macOS swaps the selection with the translation the service leaves on the pasteboard.
+## Architecture
 
-## Project structure
+```text
+TranslateKitCore
+  Language, configuration, Keychain abstraction, provider registry,
+  REST backends, AWS backend, and translation service
 
+TranslateKitApple -> TranslateKitCore
+  Apple Translation adapter and hidden TranslationSession host
+
+TranslateKit -> TranslateKitCore + TranslateKitApple
+  Menu-bar app, Settings, hotkeys, Services, Accessibility, and panels
+
+tkit -> TranslateKitCore + TranslateKitApple
+  Argument parsing, stdin/stdout, configuration commands, and exit codes
 ```
-Sources/
-├── TranslateKitApp.swift             # Entry point, AppDelegate, menu bar, hotkey flows
-├── ServiceProvider.swift             # macOS Services (popup + synchronous replace)
-├── Backends/                         # TranslationBackend protocol + Apple, DeepL, Google Cloud
-├── Models/                           # Language, LanguagePair (flip logic), TranslationResult
-├── Services/
-│   ├── AppleTranslationProvider.swift  # Headless TranslationSession host
-│   ├── ReplaceEngine.swift             # AX + CGEvent capture/replace, undo
-│   ├── TranslationCoordinator.swift    # Pair detection → backend dispatch
-│   ├── BackendManager.swift
-│   └── PreferencesManager.swift
-├── Utilities/                        # Keychain, hotkey names
-└── Views/                            # Floating panel, Settings, Onboarding
-```
+
+The code uses SwiftUI, AppKit, Foundation Translation, Security, `KeyboardShortcuts`, `swift-argument-parser`, `swift-toml`, and the Amazon Translate product from AWS SDK for Swift.
 
 ## Build commands
 
 ```bash
-make build              # Compile (debug)
+make build              # Build app and CLI in debug mode
 make test               # Run tests
-make install            # Build + install to /Applications
-make release            # Universal binary bundle + zip
-make refresh-services   # Refresh macOS Services cache
-make uninstall          # Remove from /Applications
+make run                # Run the app executable
+make run-cli            # Build and run tkit
+make install            # Build, sign, and install the app bundle
+make release            # Build a universal signed bundle and zip
+make refresh-services   # Refresh the macOS Services cache
+make uninstall          # Remove the installed app
+```
+
+Direct SwiftPM commands:
+
+```bash
+swift build --product TranslateKit
+swift build --product tkit
+swift test
+swift run tkit --help
 ```
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
