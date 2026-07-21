@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 @testable import TranslateKitCore
@@ -38,18 +39,60 @@ final class ProcessRunnerTests: XCTestCase {
         XCTAssertLessThan(start.duration(to: clock.now), .seconds(1))
     }
 
-    func testCancellationTerminatesRunningSubprocess() async throws {
+    func testCancellationTerminatesAndReapsRunningSubprocess() async throws {
         let marker = FileManager.default.temporaryDirectory
             .appendingPathComponent("translatekit-process-cancel-\(UUID().uuidString)")
+        let pidFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("translatekit-process-pid-\(UUID().uuidString)")
         let runner = ProcessRunner(
             environment: ["PATH": "/usr/bin:/bin", "HOME": "/tmp"]
         )
-        let command = "trap 'printf terminated > \(marker.path)' TERM; while :; do :; done"
-        let task = Task {
-            try await runner.run("/bin/sh", arguments: ["-c", command], timeout: 30)
-        }
-        try await Task.sleep(for: .milliseconds(50))
+        let script = """
+        import os, signal, sys, time
 
+        pid_file, marker_file = sys.argv[1], sys.argv[2]
+
+        def handle_term(_signal, _frame):
+            with open(marker_file, "w") as marker:
+                marker.write("terminated")
+
+        signal.signal(signal.SIGTERM, handle_term)
+        temporary_pid_file = f"{pid_file}.{os.getpid()}.tmp"
+        with open(temporary_pid_file, "w") as handle:
+            handle.write(str(os.getpid()))
+        os.replace(temporary_pid_file, pid_file)
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            pass
+        """
+        let task = Task {
+            try await runner.run(
+                "/usr/bin/python3",
+                arguments: ["-c", script, pidFile.path, marker.path],
+                timeout: 30
+            )
+        }
+        defer {
+            try? FileManager.default.removeItem(at: marker)
+            try? FileManager.default.removeItem(at: pidFile)
+        }
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: pidFile.path) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        guard
+            let rawPID = try? String(contentsOf: pidFile, encoding: .utf8),
+            let parsedPID = pid_t(rawPID.trimmingCharacters(in: .whitespacesAndNewlines)),
+            parsedPID > 0
+        else {
+            task.cancel()
+            _ = try? await task.value
+            XCTFail("Subprocess did not report its PID")
+            return
+        }
+
+        let clock = ContinuousClock()
+        let cancellationStarted = clock.now
         task.cancel()
 
         do {
@@ -58,11 +101,28 @@ final class ProcessRunnerTests: XCTestCase {
         } catch {
             XCTAssertTrue(error is CancellationError)
         }
+        XCTAssertLessThan(cancellationStarted.duration(to: clock.now), .seconds(1))
         for _ in 0..<100 where !FileManager.default.fileExists(atPath: marker.path) {
             try await Task.sleep(for: .milliseconds(5))
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
-        try? FileManager.default.removeItem(at: marker)
+        for _ in 0..<100 where isProcessRunning(parsedPID) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let childExitedPromptly = !isProcessRunning(parsedPID)
+        XCTAssertTrue(
+            childExitedPromptly,
+            "Cancelled subprocess PID \(parsedPID) is still alive"
+        )
+        if !childExitedPromptly {
+            for _ in 0..<400 where isProcessRunning(parsedPID) {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        XCTAssertFalse(
+            isProcessRunning(parsedPID),
+            "Self-limiting test subprocess PID \(parsedPID) did not exit"
+        )
     }
 
     func testAlreadyCancelledTaskDoesNotLaunchSubprocess() async throws {
@@ -172,4 +232,10 @@ final class ProcessRunnerTests: XCTestCase {
 
         XCTAssertEqual(output, expected)
     }
+}
+
+private func isProcessRunning(_ pid: pid_t) -> Bool {
+    errno = 0
+    if Darwin.kill(pid, 0) == 0 { return true }
+    return errno == EPERM
 }
