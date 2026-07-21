@@ -94,10 +94,17 @@ struct CLIReportedError: LocalizedError {
     let json: Bool
 
     init(_ error: Error, json: Bool) {
-        message = error.localizedDescription
+        message = sanitizeCLIMessage(error.localizedDescription)
         code = CLIExitCode.classify(error)
         self.json = json
     }
 
     var errorDescription: String? { message }
+}
+
+private func sanitizeCLIMessage(_ value: String) -> String {
+    value.unicodeScalars.reduce(into: "") { result, scalar in
+        guard !CharacterSet.controlCharacters.contains(scalar) else { return }
+        result.unicodeScalars.append(scalar)
+    }
 }

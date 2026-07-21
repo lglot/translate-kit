@@ -17,15 +17,18 @@ public struct LanguagePair: Equatable, Sendable {
     public func detectSource(of text: String) -> Language {
         let recognizer = NLLanguageRecognizer()
         recognizer.languageConstraints = [
-            NLLanguage(rawValue: first.rawValue),
-            NLLanguage(rawValue: second.rawValue)
+            NLLanguage(rawValue: first.baseLanguageCode),
+            NLLanguage(rawValue: second.baseLanguageCode)
         ]
         recognizer.processString(text)
         guard let dominant = recognizer.dominantLanguage,
               let detected = Language(rawValue: dominant.rawValue) else {
             return first
         }
-        return detected == second ? second : first
+        let firstMatches = detected.baseLanguageCode == first.baseLanguageCode
+        let secondMatches = detected.baseLanguageCode == second.baseLanguageCode
+        if secondMatches, !firstMatches { return second }
+        return first
     }
 
     /// The other member of the pair.

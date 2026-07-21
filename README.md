@@ -126,6 +126,8 @@ endpoint = "http://localhost:5000"
 
 TOML never contains API keys, bearer tokens, AWS access keys, secret keys, or session tokens. Unknown keys and invalid endpoints are rejected. Remote LibreTranslate endpoints require HTTPS; plain HTTP is accepted only for loopback hosts.
 
+Azure endpoints are restricted to Microsoft Translator global or regional hosts and official `cognitiveservices` custom domains. Entra CLI authentication requires a resource-specific custom domain in the public Azure cloud. Sovereign Azure endpoints remain available with API-key authentication.
+
 GUI-only state such as onboarding, launch at login, and menu-bar visibility remains in `UserDefaults`. On first launch, legacy language, provider, and DeepL plan values are migrated to TOML only when the file is missing.
 
 ## Credentials
@@ -136,7 +138,7 @@ Credential discovery is allowlisted and read-only:
 
 - DeepL: TranslateKit Keychain, `DEEPL_AUTH_KEY`, and the known DeepL keyring item.
 - Google: TranslateKit Keychain, API-key environment variables, or an existing `gcloud` application-default session.
-- Azure: TranslateKit Keychain, `AZURE_TRANSLATOR_KEY`, or an existing Azure CLI session.
+- Azure: TranslateKit Keychain, `AZURE_TRANSLATOR_KEY`, or an existing Azure CLI session. Discovery checks local Azure CLI session metadata without minting a token; a short-lived token is requested only for translation.
 - AWS: standard environment and SDK credential chain, profile names from standard AWS files, SSO, login, role, and `credential_process`. Profile names and regions can be stored in TOML; secret values cannot.
 - LibreTranslate: TranslateKit Keychain or `LIBRETRANSLATE_API_KEY`.
 
@@ -164,6 +166,7 @@ make refresh-services
 ```
 
 The install and release bundles include both `TranslateKit` and the signed auxiliary `tkit` executable.
+`make install` and `make release` require the project's stable `TranslateKit Dev` code-signing identity in the login Keychain so macOS can preserve Accessibility trust across rebuilds. Plain SwiftPM builds and `swift run tkit` do not require that identity.
 
 ## First run
 

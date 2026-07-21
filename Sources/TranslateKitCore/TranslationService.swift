@@ -19,6 +19,12 @@ public enum TranslationDirectionResolver {
     ) throws -> TranslationDirection {
         switch (source, target) {
         case (nil, nil):
+            guard pair.first.baseLanguageCode != pair.second.baseLanguageCode else {
+                throw TranslationDirectionError.ambiguousConfiguredPair(
+                    pair.first.rawValue,
+                    pair.second.rawValue
+                )
+            }
             let direction = pair.direction(for: text)
             return TranslationDirection(source: direction.source, target: direction.target)
         case (nil, let target?):
@@ -51,6 +57,7 @@ public enum TranslationDirectionError: LocalizedError, Equatable, Sendable {
     case targetRequiredForAutoSource
     case invalidTarget(String)
     case identicalLanguages(String)
+    case ambiguousConfiguredPair(String, String)
 
     public var errorDescription: String? {
         switch self {
@@ -62,6 +69,8 @@ public enum TranslationDirectionError: LocalizedError, Equatable, Sendable {
             return "Invalid target language: \(target)"
         case .identicalLanguages(let language):
             return "Source and target language must differ: \(language)"
+        case .ambiguousConfiguredPair(let first, let second):
+            return "Automatic direction cannot distinguish \(first) from \(second); specify source and target languages"
         }
     }
 }

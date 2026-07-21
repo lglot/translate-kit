@@ -61,7 +61,7 @@ public struct LibreTranslateBackend: TranslationBackend {
         if key != nil, response.url.host?.lowercased() != url.host?.lowercased() {
             throw TranslationError.unsafeRedirect
         }
-        try validateStatus(response.statusCode)
+        try validateStatus(response, source: source, target: target)
         guard let decoded = try? JSONDecoder().decode(LibreTranslateResponse.self, from: response.data) else {
             throw TranslationError.invalidResponse
         }
@@ -77,18 +77,36 @@ public struct LibreTranslateBackend: TranslationBackend {
         )
     }
 
-    private func validateStatus(_ status: Int) throws {
-        switch status {
+    private func validateStatus(_ response: HTTPResponse, source: Language, target: Language) throws {
+        switch response.statusCode {
         case 200..<300:
             return
+        case 400:
+            if let message = try? JSONDecoder().decode(
+                LibreTranslateErrorResponse.self,
+                from: response.data
+            ).error,
+               message.describesLibreTranslateUnsupportedLanguage(
+                   sourceCode: source.rawValue,
+                   targetCode: target.rawValue
+               ) {
+                throw TranslationError.unsupportedLanguage("\(source.rawValue) to \(target.rawValue)")
+            }
+            throw TranslationError.apiError("LibreTranslate rejected the request (HTTP 400)")
         case 401, 403:
             throw TranslationError.authenticationFailed(name)
         case 429:
             throw TranslationError.rateLimited
         default:
-            throw TranslationError.apiError("LibreTranslate rejected the request (HTTP \(status))")
+            throw TranslationError.apiError(
+                "LibreTranslate rejected the request (HTTP \(response.statusCode))"
+            )
         }
     }
+}
+
+private struct LibreTranslateErrorResponse: Decodable {
+    let error: String
 }
 
 private struct LibreTranslateResponse: Decodable {

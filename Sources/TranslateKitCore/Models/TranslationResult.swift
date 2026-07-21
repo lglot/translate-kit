@@ -39,6 +39,7 @@ public enum TranslationError: LocalizedError, Equatable, Sendable {
     case secureInputActive
     case unsafeRedirect
     case invalidConfiguration(String)
+    case cancelled
 
     public var errorDescription: String? {
         switch self {
@@ -70,6 +71,8 @@ public enum TranslationError: LocalizedError, Equatable, Sendable {
             return "Translation request was redirected to an untrusted host."
         case .invalidConfiguration(let message):
             return "Invalid provider configuration: \(message)"
+        case .cancelled:
+            return "Translation was cancelled"
         }
     }
 }

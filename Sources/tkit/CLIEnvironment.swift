@@ -16,6 +16,11 @@ struct GlobalOptions: ParsableArguments {
     var store: ConfigurationStore {
         ConfigurationStore(url: configurationURL)
     }
+
+    func resolved(with parent: GlobalOptions) -> GlobalOptions {
+        guard config == nil else { return self }
+        return parent
+    }
 }
 
 enum CLIEnvironment {

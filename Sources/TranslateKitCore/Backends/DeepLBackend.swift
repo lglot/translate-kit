@@ -51,7 +51,7 @@ public struct DeepLBackend: TranslationBackend {
         request.setValue("DeepL-Auth-Key \(apiKey)", forHTTPHeaderField: "Authorization")
 
         let response = try await perform(request, using: httpClient)
-        try validateStatus(response.statusCode)
+        try validateStatus(response, source: source, target: target)
         guard
             let decoded = try? JSONDecoder().decode(DeepLResponse.self, from: response.data),
             let translation = decoded.translations.first
@@ -70,10 +70,16 @@ public struct DeepLBackend: TranslationBackend {
         )
     }
 
-    private func validateStatus(_ status: Int) throws {
-        switch status {
+    private func validateStatus(_ response: HTTPResponse, source: Language, target: Language) throws {
+        switch response.statusCode {
         case 200..<300:
             return
+        case 400:
+            if let message = try? JSONDecoder().decode(DeepLErrorResponse.self, from: response.data).message,
+               message.describesUnsupportedLanguage {
+                throw TranslationError.unsupportedLanguage("\(source.rawValue) to \(target.rawValue)")
+            }
+            throw TranslationError.apiError("DeepL rejected the request (HTTP 400)")
         case 401, 403:
             throw TranslationError.authenticationFailed(name)
         case 429:
@@ -81,9 +87,13 @@ public struct DeepLBackend: TranslationBackend {
         case 456:
             throw TranslationError.quotaExceeded(name)
         default:
-            throw TranslationError.apiError("DeepL rejected the request (HTTP \(status))")
+            throw TranslationError.apiError("DeepL rejected the request (HTTP \(response.statusCode))")
         }
     }
+}
+
+private struct DeepLErrorResponse: Decodable {
+    let message: String
 }
 
 private struct DeepLResponse: Decodable {

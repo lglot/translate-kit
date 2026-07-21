@@ -54,7 +54,10 @@ final class RESTBackendTests: XCTestCase {
             data: Data(#"{"data":{"translations":[{"translatedText":"Bonjour"}]}}"#.utf8),
             url: URL(string: "https://translation.googleapis.com/language/translate/v2")!
         ))
-        let backend = GoogleCloudBackend(credential: .bearerToken("short-token"), httpClient: client)
+        let backend = GoogleCloudBackend(
+            credential: .bearerToken("short-token", quotaProject: "billing-project"),
+            httpClient: client
+        )
 
         _ = try await backend.translate("Hello", from: .english, to: .french)
         let capturedRequest = await client.capturedRequest()
@@ -62,6 +65,7 @@ final class RESTBackendTests: XCTestCase {
         let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
 
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer short-token")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Goog-User-Project"), "billing-project")
         XCTAssertNil(components.queryItems?.first(where: { $0.name == "key" }))
     }
 
@@ -90,6 +94,29 @@ final class RESTBackendTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "Ocp-Apim-Subscription-Key"), "azure-secret")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Ocp-Apim-Subscription-Region"), "westeurope")
         XCTAssertEqual(request.url?.path, "/translate")
+    }
+
+    func testAzureCustomDomainUsesTranslatorV3Path() async throws {
+        let client = CapturingHTTPClient(response: HTTPResponse(
+            statusCode: 200,
+            data: Data(#"[{"translations":[{"text":"Hello","to":"en"}]}]"#.utf8),
+            url: URL(string: "https://my-translator.cognitiveservices.azure.com/translator/text/v3.0/translate")!
+        ))
+        let backend = AzureBackend(
+            credential: .apiKey("azure-secret"),
+            configuration: AzureConfiguration(
+                auth: "api-key",
+                endpoint: "https://my-translator.cognitiveservices.azure.com",
+                region: "switzerlandnorth"
+            ),
+            httpClient: client
+        )
+
+        _ = try await backend.translate("Ciao", from: .italian, to: .english)
+        let capturedRequest = await client.capturedRequest()
+        let request = try XCTUnwrap(capturedRequest)
+
+        XCTAssertEqual(request.url?.path, "/translator/text/v3.0/translate")
     }
 
     func testLibreTranslateSendsOptionalKeyToConfiguredEndpoint() async throws {
@@ -167,6 +194,156 @@ final class RESTBackendTests: XCTestCase {
             _ = try await backend.translate("Hello", from: .english, to: .italian)
         } verify: { error in
             XCTAssertEqual(error as? TranslationError, .invalidResponse)
+        }
+    }
+
+    func testRESTProvidersClassifyUnsupportedLanguageWithoutLeakingResponseBody() async {
+        let cases: [(any TranslationBackend, String)] = [
+            (
+                DeepLBackend(
+                    credential: .apiKey("secret"),
+                    configuration: .init(),
+                    httpClient: CapturingHTTPClient(response: HTTPResponse(
+                        statusCode: 400,
+                        data: Data(#"{"message":"Value for 'target_lang' not supported."}"#.utf8),
+                        url: URL(string: "https://api-free.deepl.com/v2/translate")!
+                    ))
+                ),
+                "DeepL"
+            ),
+            (
+                GoogleCloudBackend(
+                    credential: .apiKey("secret"),
+                    httpClient: CapturingHTTPClient(response: HTTPResponse(
+                        statusCode: 400,
+                        data: Data(#"{"error":{"code":400,"message":"Invalid target language code."}}"#.utf8),
+                        url: URL(string: "https://translation.googleapis.com/language/translate/v2")!
+                    ))
+                ),
+                "Google Cloud"
+            ),
+            (
+                AzureBackend(
+                    credential: .apiKey("secret"),
+                    configuration: .init(),
+                    httpClient: CapturingHTTPClient(response: HTTPResponse(
+                        statusCode: 400,
+                        data: Data(#"{"error":{"code":400019,"message":"Unsupported language."}}"#.utf8),
+                        url: URL(string: "https://api.cognitive.microsofttranslator.com/translate")!
+                    ))
+                ),
+                "Azure Translator"
+            ),
+            (
+                LibreTranslateBackend(
+                    credential: .none,
+                    configuration: .init(),
+                    httpClient: CapturingHTTPClient(response: HTTPResponse(
+                        statusCode: 400,
+                        data: Data(#"{"error":"it is not supported"}"#.utf8),
+                        url: URL(string: "http://localhost:5000/translate")!
+                    ))
+                ),
+                "LibreTranslate"
+            )
+        ]
+
+        for (backend, name) in cases {
+            await XCTAssertThrowsErrorAsync {
+                _ = try await backend.translate("Ciao", from: .italian, to: .english)
+            } verify: { error in
+                XCTAssertEqual(
+                    error as? TranslationError,
+                    .unsupportedLanguage("it to en"),
+                    name
+                )
+            }
+        }
+    }
+
+    func testRESTProvidersDoNotClassifyArbitraryBadRequestAsUnsupportedLanguage() async {
+        let responseBody = Data(#"{"error":"provider detail must stay private"}"#.utf8)
+        let cases: [(any TranslationBackend, String)] = [
+            (
+                DeepLBackend(
+                    credential: .apiKey("secret"),
+                    configuration: .init(),
+                    httpClient: CapturingHTTPClient(response: HTTPResponse(
+                        statusCode: 400,
+                        data: responseBody,
+                        url: URL(string: "https://api-free.deepl.com/v2/translate")!
+                    ))
+                ),
+                "DeepL"
+            ),
+            (
+                GoogleCloudBackend(
+                    credential: .apiKey("secret"),
+                    httpClient: CapturingHTTPClient(response: HTTPResponse(
+                        statusCode: 400,
+                        data: responseBody,
+                        url: URL(string: "https://translation.googleapis.com/language/translate/v2")!
+                    ))
+                ),
+                "Google Cloud"
+            ),
+            (
+                AzureBackend(
+                    credential: .apiKey("secret"),
+                    configuration: .init(),
+                    httpClient: CapturingHTTPClient(response: HTTPResponse(
+                        statusCode: 400,
+                        data: responseBody,
+                        url: URL(string: "https://api.cognitive.microsofttranslator.com/translate")!
+                    ))
+                ),
+                "Azure Translator"
+            ),
+            (
+                LibreTranslateBackend(
+                    credential: .none,
+                    configuration: .init(),
+                    httpClient: CapturingHTTPClient(response: HTTPResponse(
+                        statusCode: 400,
+                        data: responseBody,
+                        url: URL(string: "http://localhost:5000/translate")!
+                    ))
+                ),
+                "LibreTranslate"
+            )
+        ]
+
+        for (backend, name) in cases {
+            await XCTAssertThrowsErrorAsync {
+                _ = try await backend.translate("Ciao", from: .italian, to: .english)
+            } verify: { error in
+                guard let translationError = error as? TranslationError,
+                      case .apiError = translationError else {
+                    return XCTFail("Expected sanitized API error for \(name), got \(error)")
+                }
+                XCTAssertFalse(error.localizedDescription.contains("provider detail"), name)
+            }
+        }
+    }
+
+    func testLibreTranslateDoesNotClassifyUnsupportedFormatAsUnsupportedLanguage() async {
+        let backend = LibreTranslateBackend(
+            credential: .none,
+            configuration: .init(),
+            httpClient: CapturingHTTPClient(response: HTTPResponse(
+                statusCode: 400,
+                data: Data(#"{"error":"html format is not supported"}"#.utf8),
+                url: URL(string: "http://localhost:5000/translate")!
+            ))
+        )
+
+        await XCTAssertThrowsErrorAsync {
+            _ = try await backend.translate("Ciao", from: .italian, to: .english)
+        } verify: { error in
+            XCTAssertEqual(
+                error as? TranslationError,
+                .apiError("LibreTranslate rejected the request (HTTP 400)")
+            )
         }
     }
 }

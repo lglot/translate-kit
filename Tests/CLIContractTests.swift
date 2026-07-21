@@ -88,6 +88,27 @@ final class CLIContractTests: XCTestCase {
         XCTAssertTrue(rendered.contains("Authentication failed"))
     }
 
+    func testConfigurationErrorsDoNotReflectRawInvalidValues() {
+        let secretLikeValue = "secret-value-that-was-put-in-the-wrong-field"
+        let error = ConfigurationError.invalidValue(
+            "translation.provider",
+            secretLikeValue
+        )
+
+        XCTAssertFalse(error.localizedDescription.contains(secretLikeValue))
+        XCTAssertTrue(error.localizedDescription.contains("translation.provider"))
+    }
+
+    func testReportedErrorsStripTerminalControlCharacters() {
+        let reported = CLIReportedError(
+            CLIInputError.invalidProvider("\u{001B}[31mhostile"),
+            json: false
+        )
+
+        XCTAssertFalse(reported.message.contains("\u{001B}"))
+        XCTAssertTrue(reported.message.contains("hostile"))
+    }
+
     func testParserDispositionDistinguishesHelpFromInvalidUsage() async {
         do {
             var command = try await TKitCommand.asyncParseAsRoot(["--help"])
@@ -107,5 +128,12 @@ final class CLIContractTests: XCTestCase {
         } catch {
             XCTAssertEqual(CLIParserDisposition(error), .usage)
         }
+    }
+
+    func testConfigOptionIsAcceptedBeforeSubcommand() async throws {
+        _ = try await TKitCommand.asyncParseAsRoot([
+            "--config", "/tmp/translate-kit-root.toml",
+            "config", "path"
+        ])
     }
 }

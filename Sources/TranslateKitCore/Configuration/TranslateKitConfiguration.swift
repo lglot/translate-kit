@@ -45,11 +45,14 @@ public struct TranslateKitConfiguration: Codable, Equatable, Sendable {
         guard ["auto", "api-key", "entra"].contains(providers.azure.auth) else {
             throw ConfigurationError.invalidValue("providers.azure.auth", providers.azure.auth)
         }
-        try Self.validateSecureURL(
-            providers.azure.endpoint,
-            key: "providers.azure.endpoint",
-            allowsLoopbackHTTP: false
-        )
+        try Self.validateAzureEndpoint(providers.azure.endpoint)
+        if providers.azure.auth == "entra",
+           !Self.isAzurePublicCustomEndpoint(providers.azure.endpoint) {
+            throw ConfigurationError.invalidValue(
+                "providers.azure.auth",
+                "entra requires a public Azure custom-domain endpoint"
+            )
+        }
         guard ["auto", "profile", "static"].contains(providers.aws.auth) else {
             throw ConfigurationError.invalidValue("providers.aws.auth", providers.aws.auth)
         }
@@ -69,25 +72,86 @@ public struct TranslateKitConfiguration: Codable, Equatable, Sendable {
         key: String,
         allowsLoopbackHTTP: Bool
     ) throws {
-        guard let url = URL(string: value), let scheme = url.scheme?.lowercased(), let host = url.host else {
+        guard
+            let components = URLComponents(string: value),
+            let scheme = components.scheme?.lowercased(),
+            let host = components.host?.lowercased(),
+            !host.isEmpty,
+            components.user == nil,
+            components.password == nil,
+            components.query == nil,
+            components.fragment == nil
+        else {
             throw ConfigurationError.invalidValue(key, value)
         }
         if scheme == "https" { return }
         if allowsLoopbackHTTP,
            scheme == "http",
-           ["localhost", "127.0.0.1", "::1"].contains(host.lowercased()) {
+           ["localhost", "127.0.0.1", "::1"].contains(host) {
             return
         }
         throw ConfigurationError.invalidValue(key, value)
     }
 
-    private enum CodingKeys: String, CodingKey {
+    private static func validateAzureEndpoint(_ value: String) throws {
+        let key = "providers.azure.endpoint"
+        guard
+            let components = URLComponents(string: value),
+            components.scheme?.lowercased() == "https",
+            let host = components.host?.lowercased(),
+            components.user == nil,
+            components.password == nil,
+            components.port == nil || components.port == 443,
+            components.query == nil,
+            components.fragment == nil
+        else {
+            throw ConfigurationError.invalidValue(key, value)
+        }
+
+        let fixedHosts: Set<String> = [
+            "api.cognitive.microsofttranslator.com",
+            "api-nam.cognitive.microsofttranslator.com",
+            "api-apc.cognitive.microsofttranslator.com",
+            "api-eur.cognitive.microsofttranslator.com",
+            "api.cognitive.microsofttranslator.us",
+            "api.translator.azure.cn"
+        ]
+        let isCustomDomain = isAzureCustomEndpoint(value)
+        guard fixedHosts.contains(host) || isCustomDomain else {
+            throw ConfigurationError.invalidValue(key, value)
+        }
+    }
+
+    static func isAzureCustomEndpoint(_ value: String) -> Bool {
+        guard let host = URLComponents(string: value)?.host?.lowercased() else {
+            return false
+        }
+        let customDomainSuffixes = [
+            ".cognitiveservices.azure.com",
+            ".cognitiveservices.azure.us",
+            ".cognitiveservices.azure.cn"
+        ]
+        return customDomainSuffixes.contains { suffix in
+            host.hasSuffix(suffix) && host.count > suffix.count
+        }
+    }
+
+    static func isAzurePublicCustomEndpoint(_ value: String) -> Bool {
+        guard let host = URLComponents(string: value)?.host?.lowercased() else {
+            return false
+        }
+        let suffix = ".cognitiveservices.azure.com"
+        return host.hasSuffix(suffix) && host.count > suffix.count
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case version
         case translation
         case providers
     }
 
     public init(from decoder: Decoder) throws {
+        try rejectUnknownKeys(in: decoder, allowed: CodingKeys.self)
         let container = try decoder.container(keyedBy: CodingKeys.self)
         version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
         translation = try container.decodeIfPresent(TranslationConfiguration.self, forKey: .translation) ?? .init()
@@ -106,13 +170,14 @@ public struct TranslationConfiguration: Codable, Equatable, Sendable {
         self.secondLanguage = secondLanguage
     }
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case provider
         case firstLanguage = "first_language"
         case secondLanguage = "second_language"
     }
 
     public init(from decoder: Decoder) throws {
+        try rejectUnknownKeys(in: decoder, allowed: CodingKeys.self)
         let container = try decoder.container(keyedBy: CodingKeys.self)
         provider = try container.decodeIfPresent(String.self, forKey: .provider) ?? "apple"
         firstLanguage = try container.decodeIfPresent(String.self, forKey: .firstLanguage) ?? "it"
@@ -141,7 +206,7 @@ public struct ProviderConfigurations: Codable, Equatable, Sendable {
         self.libretranslate = libretranslate
     }
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case deepl
         case googleCloud = "google_cloud"
         case azure
@@ -150,6 +215,7 @@ public struct ProviderConfigurations: Codable, Equatable, Sendable {
     }
 
     public init(from decoder: Decoder) throws {
+        try rejectUnknownKeys(in: decoder, allowed: CodingKeys.self)
         let container = try decoder.container(keyedBy: CodingKeys.self)
         deepl = try container.decodeIfPresent(DeepLConfiguration.self, forKey: .deepl) ?? .init()
         googleCloud = try container.decodeIfPresent(GoogleCloudConfiguration.self, forKey: .googleCloud) ?? .init()
@@ -162,11 +228,27 @@ public struct ProviderConfigurations: Codable, Equatable, Sendable {
 public struct DeepLConfiguration: Codable, Equatable, Sendable {
     public var plan: String
     public init(plan: String = "free") { self.plan = plan }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable { case plan }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownKeys(in: decoder, allowed: CodingKeys.self)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        plan = try container.decodeIfPresent(String.self, forKey: .plan) ?? "free"
+    }
 }
 
 public struct GoogleCloudConfiguration: Codable, Equatable, Sendable {
     public var auth: String
     public init(auth: String = "auto") { self.auth = auth }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable { case auth }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownKeys(in: decoder, allowed: CodingKeys.self)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        auth = try container.decodeIfPresent(String.self, forKey: .auth) ?? "auto"
+    }
 }
 
 public struct AzureConfiguration: Codable, Equatable, Sendable {
@@ -183,6 +265,21 @@ public struct AzureConfiguration: Codable, Equatable, Sendable {
         self.endpoint = endpoint
         self.region = region
     }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case auth
+        case endpoint
+        case region
+    }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownKeys(in: decoder, allowed: CodingKeys.self)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        auth = try container.decodeIfPresent(String.self, forKey: .auth) ?? "auto"
+        endpoint = try container.decodeIfPresent(String.self, forKey: .endpoint)
+            ?? "https://api.cognitive.microsofttranslator.com"
+        region = try container.decodeIfPresent(String.self, forKey: .region) ?? ""
+    }
 }
 
 public struct AWSConfiguration: Codable, Equatable, Sendable {
@@ -195,11 +292,34 @@ public struct AWSConfiguration: Codable, Equatable, Sendable {
         self.profile = profile
         self.region = region
     }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case auth
+        case profile
+        case region
+    }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownKeys(in: decoder, allowed: CodingKeys.self)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        auth = try container.decodeIfPresent(String.self, forKey: .auth) ?? "profile"
+        profile = try container.decodeIfPresent(String.self, forKey: .profile) ?? ""
+        region = try container.decodeIfPresent(String.self, forKey: .region) ?? ""
+    }
 }
 
 public struct LibreTranslateConfiguration: Codable, Equatable, Sendable {
     public var endpoint: String
     public init(endpoint: String = "http://localhost:5000") { self.endpoint = endpoint }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable { case endpoint }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownKeys(in: decoder, allowed: CodingKeys.self)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        endpoint = try container.decodeIfPresent(String.self, forKey: .endpoint)
+            ?? "http://localhost:5000"
+    }
 }
 
 public struct LegacyTranslationPreferences: Sendable {
@@ -233,8 +353,36 @@ public enum ConfigurationError: LocalizedError, Equatable {
             return "Unknown configuration key: \(key)"
         case .unsupportedVersion(let version):
             return "Unsupported configuration version: \(version)"
-        case .invalidValue(let key, let value):
-            return "Invalid value for \(key): \(value)"
+        case .invalidValue(let key, _):
+            return "Invalid value for \(key)"
         }
+    }
+}
+
+private struct AnyConfigurationCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func rejectUnknownKeys<Key>(
+    in decoder: Decoder,
+    allowed: Key.Type
+) throws where Key: CodingKey & CaseIterable, Key.AllCases: Collection {
+    let container = try decoder.container(keyedBy: AnyConfigurationCodingKey.self)
+    let allowedKeys = Set(Key.allCases.map(\.stringValue))
+    if let unknown = container.allKeys.first(where: { !allowedKeys.contains($0.stringValue) }) {
+        let path = (decoder.codingPath.map(\.stringValue) + [unknown.stringValue])
+            .joined(separator: ".")
+        throw ConfigurationError.unknownKey(path)
     }
 }

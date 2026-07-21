@@ -23,13 +23,20 @@ public protocol HTTPClient: Sendable {
     func send(_ request: URLRequest) async throws -> HTTPResponse
 }
 
-public final class URLSessionHTTPClient: NSObject, HTTPClient, URLSessionTaskDelegate, @unchecked Sendable {
+public final class URLSessionHTTPClient: HTTPClient, @unchecked Sendable {
     public static let shared = URLSessionHTTPClient()
 
-    private lazy var session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
+    private let redirectDelegate: SameHostRedirectDelegate
+    private let session: URLSession
 
-    public override init() {
-        super.init()
+    public init() {
+        let redirectDelegate = SameHostRedirectDelegate()
+        self.redirectDelegate = redirectDelegate
+        session = URLSession(
+            configuration: .ephemeral,
+            delegate: redirectDelegate,
+            delegateQueue: nil
+        )
     }
 
     public func send(_ request: URLRequest) async throws -> HTTPResponse {
@@ -49,7 +56,10 @@ public final class URLSessionHTTPClient: NSObject, HTTPClient, URLSessionTaskDel
         )
     }
 
-    public func urlSession(
+}
+
+private final class SameHostRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
         willPerformHTTPRedirection response: HTTPURLResponse,
@@ -74,6 +84,11 @@ func perform(_ request: URLRequest, using client: any HTTPClient) async throws -
         return try await client.send(request)
     } catch let error as TranslationError {
         throw error
+    } catch is CancellationError {
+        throw CancellationError()
+    } catch let error as URLError where error.code == .cancelled {
+        if Task.isCancelled { throw CancellationError() }
+        throw TranslationError.cancelled
     } catch {
         throw TranslationError.noInternet
     }

@@ -18,11 +18,8 @@ enum TranslationCoordinator {
         let configuration = try preferences.validatedConfiguration()
 
         if let targetOverride {
-            var (source, target) = preferences.languagePair.direction(for: text)
-            target = targetOverride
-            if source == targetOverride { source = .auto }
             return try await service.translate(
-                TranslationRequest(text: text, source: source, target: target),
+                TranslationRequest(text: text, target: targetOverride),
                 configuration: configuration
             )
         }

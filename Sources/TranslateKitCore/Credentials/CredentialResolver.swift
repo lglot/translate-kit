@@ -11,7 +11,7 @@ public protocol CredentialResolving: Sendable {
 
 public enum ProviderCredential: Equatable, Sendable {
     case apiKey(String)
-    case bearerToken(String)
+    case bearerToken(String, quotaProject: String? = nil)
     case awsProfile(String?)
     case awsStatic(accessKeyID: String, secretAccessKey: String, sessionToken: String?)
     case none
@@ -48,6 +48,13 @@ public struct CredentialDiscovery: Codable, Equatable, Sendable {
 }
 
 public struct CredentialResolver: CredentialResolving, Sendable {
+    private static let awsStaticCredential = SecretReference.translateKitAccount(
+        "aws_static_credentials"
+    )
+    private static let legacyAWSMutationMarker = SecretReference.translateKitAccount(
+        "aws_static_credentials_update_in_progress"
+    )
+
     private let secretStore: any SecretStore
     private let environment: [String: String]
     private let processRunner: any ProcessRunning
@@ -79,40 +86,43 @@ public struct CredentialResolver: CredentialResolving, Sendable {
                 externalReference: SecretReference(service: "deepl", account: "DEEPL_AUTH_KEY")
             ) ?? .none
         case .googleCloud:
-            if let credential = try keyCredential(
+            let key = try keyCredential(
                 provider: provider,
                 environmentNames: ["GOOGLE_CLOUD_API_KEY", "GOOGLE_API_KEY"]
-            ) {
-                return credential
+            )
+            switch configuration.providers.googleCloud.auth {
+            case "api-key":
+                return key ?? .none
+            case "gcloud":
+                return try await googleCloudToken()
+            default:
+                if let key { return key }
+                return try await googleCloudToken()
             }
-            if configuration.providers.googleCloud.auth != "api-key",
-               let token = await commandOutput(
-                   "gcloud",
-                   arguments: ["auth", "application-default", "print-access-token"]
-               ) {
-                return .bearerToken(token)
-            }
-            return .none
         case .azure:
-            if let credential = try keyCredential(
+            let key = try keyCredential(
                 provider: provider,
                 environmentNames: ["AZURE_TRANSLATOR_KEY"]
-            ) {
-                return credential
+            )
+            switch configuration.providers.azure.auth {
+            case "api-key":
+                return key ?? .none
+            case "entra":
+                guard TranslateKitConfiguration.isAzurePublicCustomEndpoint(
+                    configuration.providers.azure.endpoint
+                ) else {
+                    return .none
+                }
+                return try await azureCLIToken()
+            default:
+                if let key { return key }
+                guard TranslateKitConfiguration.isAzurePublicCustomEndpoint(
+                    configuration.providers.azure.endpoint
+                ) else {
+                    return .none
+                }
+                return try await azureCLIToken()
             }
-            if configuration.providers.azure.auth != "api-key",
-               let token = await commandOutput(
-                   "az",
-                   arguments: [
-                       "account", "get-access-token",
-                       "--resource", "https://cognitiveservices.azure.com",
-                       "--query", "accessToken",
-                       "--output", "tsv"
-                   ]
-               ) {
-                return .bearerToken(token)
-            }
-            return .none
         case .aws:
             return try resolveAWS(configuration.providers.aws)
         case .libretranslate:
@@ -141,24 +151,13 @@ public struct CredentialResolver: CredentialResolving, Sendable {
             if firstEnvironmentValue(["GOOGLE_CLOUD_API_KEY", "GOOGLE_API_KEY"]) != nil {
                 sources.append(.environment)
             }
-            if await commandOutput(
-                "gcloud",
-                arguments: ["auth", "application-default", "print-access-token"]
-            ) != nil {
+            if googleCloudSessionConfigured() {
                 sources.append(.googleCloudCLI)
             }
         case .azure:
             if try hasValue(.translateKit(provider)) { sources.append(.translateKitKeychain) }
             if firstEnvironmentValue(["AZURE_TRANSLATOR_KEY"]) != nil { sources.append(.environment) }
-            if await commandOutput(
-                "az",
-                arguments: [
-                    "account", "get-access-token",
-                    "--resource", "https://cognitiveservices.azure.com",
-                    "--query", "accessToken",
-                    "--output", "tsv"
-                ]
-            ) != nil {
+            if azureCLISessionConfigured() {
                 sources.append(.azureCLI)
             }
         case .aws:
@@ -212,24 +211,21 @@ public struct CredentialResolver: CredentialResolving, Sendable {
         guard !accessKeyID.isEmpty, !secretAccessKey.isEmpty else {
             throw CredentialResolverError.invalidAWSStaticCredential
         }
-        do {
-            try secretStore.set(accessKeyID, for: .translateKitAccount("aws_access_key_id"))
-            try secretStore.set(secretAccessKey, for: .translateKitAccount("aws_secret_access_key"))
-            if let sessionToken, !sessionToken.isEmpty {
-                try secretStore.set(sessionToken, for: .translateKitAccount("aws_session_token"))
-            } else {
-                try secretStore.delete(.translateKitAccount("aws_session_token"))
-            }
-        } catch {
-            try? deleteAWSStatic()
-            throw error
-        }
+        let record = AWSStaticCredentialRecord(
+            accessKeyID: accessKeyID,
+            secretAccessKey: secretAccessKey,
+            sessionToken: nonEmpty(sessionToken)
+        )
+        try secretStore.set(try record.encoded(), for: Self.awsStaticCredential)
+        try removeLegacyAWSStaticCredential()
     }
 
     public func deleteAWSStatic() throws {
-        try secretStore.delete(.translateKitAccount("aws_access_key_id"))
-        try secretStore.delete(.translateKitAccount("aws_secret_access_key"))
-        try secretStore.delete(.translateKitAccount("aws_session_token"))
+        try secretStore.set(
+            try AWSStaticCredentialRecord.deleted.encoded(),
+            for: Self.awsStaticCredential
+        )
+        try removeLegacyAWSStaticCredential()
     }
 
     private func keyCredential(
@@ -259,6 +255,10 @@ public struct CredentialResolver: CredentialResolving, Sendable {
     }
 
     private func staticAWSCredential() throws -> ProviderCredential? {
+        if let value = try secretStore.value(for: Self.awsStaticCredential) {
+            return try AWSStaticCredentialRecord.decode(value).credential
+        }
+        guard try !hasValue(Self.legacyAWSMutationMarker) else { return nil }
         guard
             let accessKeyID = try nonEmpty(secretStore.value(for: .translateKitAccount("aws_access_key_id"))),
             let secretAccessKey = try nonEmpty(secretStore.value(for: .translateKitAccount("aws_secret_access_key")))
@@ -287,11 +287,99 @@ public struct CredentialResolver: CredentialResolving, Sendable {
         )
     }
 
-    private func commandOutput(_ executable: String, arguments: [String]) async -> String? {
-        guard let output = try? await processRunner.run(executable, arguments: arguments, timeout: 5) else {
+    private func removeLegacyAWSStaticCredential() throws {
+        var cleanupFailed = false
+        for account in [
+            "aws_access_key_id",
+            "aws_secret_access_key",
+            "aws_session_token",
+            "aws_static_credentials_update_in_progress"
+        ] {
+            do {
+                try secretStore.delete(.translateKitAccount(account))
+            } catch {
+                cleanupFailed = true
+            }
+        }
+        if cleanupFailed {
+            throw CredentialResolverError.awsLegacyCredentialCleanupFailed
+        }
+    }
+
+    private func commandOutput(_ executable: String, arguments: [String]) async throws -> String? {
+        do {
+            let output = try await processRunner.run(executable, arguments: arguments, timeout: 5)
+            return nonEmpty(output.trimmingCharacters(in: .whitespacesAndNewlines))
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
             return nil
         }
-        return nonEmpty(output.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private func googleCloudToken() async throws -> ProviderCredential {
+        guard let token = try await commandOutput(
+            "gcloud",
+            arguments: ["auth", "application-default", "print-access-token"]
+        ) else {
+            return .none
+        }
+        return .bearerToken(token, quotaProject: googleCloudQuotaProject())
+    }
+
+    private func azureCLIToken() async throws -> ProviderCredential {
+        guard let token = try await commandOutput(
+            "az",
+            arguments: [
+                "account", "get-access-token",
+                "--resource", "https://cognitiveservices.azure.com",
+                "--query", "accessToken",
+                "--output", "tsv"
+            ]
+        ) else {
+            return .none
+        }
+        return .bearerToken(token)
+    }
+
+    private func googleCloudSessionConfigured() -> Bool {
+        googleCloudCredentialsURL() != nil
+    }
+
+    private func googleCloudQuotaProject() -> String? {
+        guard
+            let url = googleCloudCredentialsURL(),
+            let data = try? Data(contentsOf: url),
+            let metadata = try? JSONDecoder().decode(GoogleCredentialMetadata.self, from: data)
+        else {
+            return nil
+        }
+        return nonEmpty(metadata.quotaProjectID)
+    }
+
+    private func googleCloudCredentialsURL() -> URL? {
+        if let credentialsPath = firstEnvironmentValue(["GOOGLE_APPLICATION_CREDENTIALS"]) {
+            let url = URL(fileURLWithPath: expandedPath(credentialsPath))
+            if FileManager.default.fileExists(atPath: url.path) { return url }
+        }
+        let configurationDirectory = firstEnvironmentValue(["CLOUDSDK_CONFIG"])
+            .map { URL(fileURLWithPath: expandedPath($0), isDirectory: true) }
+            ?? homeDirectory.appendingPathComponent(".config/gcloud", isDirectory: true)
+        let url = configurationDirectory.appendingPathComponent("application_default_credentials.json")
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    private func azureCLISessionConfigured() -> Bool {
+        let configurationDirectory = firstEnvironmentValue(["AZURE_CONFIG_DIR"])
+            .map { URL(fileURLWithPath: expandedPath($0), isDirectory: true) }
+            ?? homeDirectory.appendingPathComponent(".azure", isDirectory: true)
+        return FileManager.default.fileExists(
+            atPath: configurationDirectory.appendingPathComponent("azureProfile.json").path
+        )
+    }
+
+    private func expandedPath(_ value: String) -> String {
+        NSString(string: value).expandingTildeInPath
     }
 
     private func awsProfileNames() throws -> [String] {
@@ -344,9 +432,90 @@ public struct CredentialResolver: CredentialResolving, Sendable {
     }
 }
 
+private struct GoogleCredentialMetadata: Decodable {
+    let quotaProjectID: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case quotaProjectID = "quota_project_id"
+    }
+}
+
+private struct AWSStaticCredentialRecord: Codable {
+    private static let currentVersion = 1
+
+    let version: Int
+    let deleted: Bool
+    let accessKeyID: String?
+    let secretAccessKey: String?
+    let sessionToken: String?
+
+    init(accessKeyID: String, secretAccessKey: String, sessionToken: String?) {
+        version = Self.currentVersion
+        deleted = false
+        self.accessKeyID = accessKeyID
+        self.secretAccessKey = secretAccessKey
+        self.sessionToken = sessionToken
+    }
+
+    private init(deleted: Bool) {
+        version = Self.currentVersion
+        self.deleted = deleted
+        accessKeyID = nil
+        secretAccessKey = nil
+        sessionToken = nil
+    }
+
+    static let deleted = AWSStaticCredentialRecord(deleted: true)
+
+    var credential: ProviderCredential? {
+        guard
+            version == Self.currentVersion,
+            !deleted,
+            let accessKeyID,
+            !accessKeyID.isEmpty,
+            let secretAccessKey,
+            !secretAccessKey.isEmpty
+        else {
+            return nil
+        }
+        return .awsStatic(
+            accessKeyID: accessKeyID,
+            secretAccessKey: secretAccessKey,
+            sessionToken: sessionToken.flatMap { $0.isEmpty ? nil : $0 }
+        )
+    }
+
+    func encoded() throws -> String {
+        let data = try JSONEncoder().encode(self)
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw SecretStoreError.invalidData
+        }
+        return value
+    }
+
+    static func decode(_ value: String) throws -> AWSStaticCredentialRecord {
+        guard let data = value.data(using: .utf8) else {
+            throw CredentialResolverError.awsCredentialStateInconsistent
+        }
+        do {
+            let record = try JSONDecoder().decode(AWSStaticCredentialRecord.self, from: data)
+            guard record.version == currentVersion else {
+                throw CredentialResolverError.awsCredentialStateInconsistent
+            }
+            return record
+        } catch is CredentialResolverError {
+            throw CredentialResolverError.awsCredentialStateInconsistent
+        } catch {
+            throw CredentialResolverError.awsCredentialStateInconsistent
+        }
+    }
+}
+
 public enum CredentialResolverError: LocalizedError, Equatable {
     case unsupportedSecret(ProviderID)
     case invalidAWSStaticCredential
+    case awsCredentialStateInconsistent
+    case awsLegacyCredentialCleanupFailed
 
     public var errorDescription: String? {
         switch self {
@@ -354,6 +523,10 @@ public enum CredentialResolverError: LocalizedError, Equatable {
             return "Provider does not accept a single API key: \(provider.rawValue)"
         case .invalidAWSStaticCredential:
             return "AWS access key ID and secret access key are required"
+        case .awsCredentialStateInconsistent:
+            return "AWS static credentials are unavailable after a failed Keychain update"
+        case .awsLegacyCredentialCleanupFailed:
+            return "AWS static credentials changed, but legacy Keychain items could not be removed"
         }
     }
 }

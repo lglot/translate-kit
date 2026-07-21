@@ -8,6 +8,13 @@ struct AppleTranslationOutput: Sendable {
     let sourceLanguage: Language
 }
 
+struct HostedAppleTranslationSession {
+    let generation: UUID
+    let source: Language?
+    let target: Language
+    var configuration: TranslationSession.Configuration
+}
+
 /// Runs Apple's `TranslationSession` outside any visible UI.
 ///
 /// The Translation framework only exposes sessions through the SwiftUI
@@ -17,33 +24,50 @@ struct AppleTranslationOutput: Sendable {
 final class AppleTranslationProvider: ObservableObject {
     static let shared = AppleTranslationProvider()
 
-    @Published private(set) var configuration: TranslationSession.Configuration?
+    @Published private(set) var hostedSession: HostedAppleTranslationSession?
+
+    private struct Pair: Equatable {
+        let source: Language?
+        let target: Language
+    }
 
     private struct Request {
         let id: UUID
         let text: String
-        let source: Language?
-        let target: Language
+        let pair: Pair
         let continuation: CheckedContinuation<AppleTranslationOutput, Error>
     }
 
-    private var queue: [Request] = []
+    typealias SessionTranslator = @MainActor (String) async throws -> AppleTranslationOutput
+
+    private let requestTimeout: Duration
+    private let hostsWindow: Bool
+    private var requests: [UUID: Request] = [:]
+    private var queue: [UUID] = []
     private var timeouts: [UUID: Task<Void, Never>] = [:]
-    private var currentPair: (source: Language?, target: Language)?
+    private var currentPair: Pair?
+    private var currentGeneration: UUID?
+    private var inFlightRequestID: UUID?
+    private var currentDrain: (generation: UUID, task: Task<Void, Never>)?
     private var hostWindow: NSWindow?
 
-    private init() {}
+    init(requestTimeout: Duration = .seconds(20), hostsWindow: Bool = true) {
+        self.requestTimeout = requestTimeout
+        self.hostsWindow = hostsWindow
+    }
 
     func translate(
         _ text: String,
         from source: Language?,
         to target: Language
     ) async throws -> AppleTranslationOutput {
-        ensureHostWindow()
+        if hostsWindow { ensureHostWindow() }
 
         if let source {
             let status = await LanguageAvailability().status(
-                from: source.localeLanguage, to: target.localeLanguage)
+                from: source.localeLanguage,
+                to: target.localeLanguage
+            )
             switch status {
             case .installed:
                 break
@@ -51,76 +75,176 @@ final class AppleTranslationProvider: ObservableObject {
                 throw TranslationError.modelNotDownloaded(source, target)
             case .unsupported:
                 throw TranslationError.unsupportedLanguage(
-                    "\(source.displayName) to \(target.displayName)")
+                    "\(source.displayName) to \(target.displayName)"
+                )
             @unknown default:
                 break
             }
         }
 
         let id = UUID()
-        return try await withCheckedThrowingContinuation { continuation in
-            queue.append(Request(id: id, text: text, source: source, target: target, continuation: continuation))
-            scheduleTimeout(for: id)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                let request = Request(
+                    id: id,
+                    text: text,
+                    pair: Pair(source: source, target: target),
+                    continuation: continuation
+                )
+                requests[id] = request
+                queue.append(id)
+                scheduleTimeout(for: id)
+                kickSessionIfNeeded()
+            }
+        } onCancel: { [weak self] in
+            Task { @MainActor in
+                self?.cancelRequest(id)
+            }
+        }
+    }
+
+    /// Called by the host view for the exact configuration generation that
+    /// produced `session`. Stale callbacks are ignored before reading the queue.
+    func runHostedSession(
+        _ hosted: HostedAppleTranslationSession,
+        translator: @escaping SessionTranslator
+    ) async {
+        guard currentGeneration == hosted.generation else { return }
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.drain(hosted: hosted, translator: translator)
+        }
+        currentDrain = (hosted.generation, task)
+        await task.value
+        if currentDrain?.generation == hosted.generation {
+            currentDrain = nil
+        }
+    }
+
+    private func drain(
+        hosted: HostedAppleTranslationSession,
+        translator: @escaping SessionTranslator
+    ) async {
+        let pair = Pair(source: hosted.source, target: hosted.target)
+        guard currentGeneration == hosted.generation, currentPair == pair else { return }
+
+        while currentGeneration == hosted.generation,
+              let queueIndex = queue.firstIndex(where: { id in
+                  requests[id]?.pair == pair
+              }) {
+            let id = queue.remove(at: queueIndex)
+            guard let request = requests[id] else { continue }
+            inFlightRequestID = id
+
+            let result: Result<AppleTranslationOutput, Error>
+            do {
+                result = .success(try await translator(request.text))
+            } catch {
+                result = .failure(error)
+            }
+
+            guard currentGeneration == hosted.generation else { return }
+            inFlightRequestID = nil
+            finishRequest(id, with: result)
+        }
+
+        guard currentGeneration == hosted.generation else { return }
+        resetCurrentSession(cancelDrain: false)
+        kickSessionIfNeeded()
+    }
+
+    private func scheduleTimeout(for id: UUID) {
+        timeouts[id] = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: requestTimeout)
+            guard !Task.isCancelled else { return }
+            timeoutRequest(id)
+        }
+    }
+
+    private func timeoutRequest(_ id: UUID) {
+        guard requests[id] != nil else { return }
+        let wasInFlight = inFlightRequestID == id
+        let pair = requests[id]?.pair
+        finishRequest(
+            id,
+            with: .failure(TranslationError.apiError("Apple Translation timed out"))
+        )
+        recoverSessionAfterRequestRemoval(pair: pair, wasInFlight: wasInFlight)
+    }
+
+    private func cancelRequest(_ id: UUID) {
+        guard requests[id] != nil else { return }
+        let wasInFlight = inFlightRequestID == id
+        let pair = requests[id]?.pair
+        finishRequest(id, with: .failure(CancellationError()))
+        recoverSessionAfterRequestRemoval(pair: pair, wasInFlight: wasInFlight)
+    }
+
+    private func recoverSessionAfterRequestRemoval(pair: Pair?, wasInFlight: Bool) {
+        guard pair == currentPair else { return }
+        let hasQueuedRequestForPair = queue.contains { requests[$0]?.pair == pair }
+        if wasInFlight || (!hasQueuedRequestForPair && inFlightRequestID == nil) {
+            resetCurrentSession(cancelDrain: true)
             kickSessionIfNeeded()
         }
     }
 
-    /// Called by the host view whenever the configuration produces a session.
-    func drain(using session: TranslationSession) async {
-        guard let pair = currentPair else { return }
-        var index = 0
-        while index < queue.count {
-            guard queue[index].source == pair.source, queue[index].target == pair.target else {
-                index += 1
-                continue
-            }
-            let request = queue.remove(at: index)
-            timeouts.removeValue(forKey: request.id)?.cancel()
-            do {
-                let response = try await session.translate(request.text)
-                request.continuation.resume(returning: AppleTranslationOutput(
-                    text: response.targetText,
-                    sourceLanguage: Language(localeLanguage: response.sourceLanguage) ?? request.source ?? .auto
-                ))
-            } catch {
-                request.continuation.resume(throwing: error)
-            }
+    private func finishRequest(
+        _ id: UUID,
+        with result: Result<AppleTranslationOutput, Error>
+    ) {
+        guard let request = requests.removeValue(forKey: id) else { return }
+        queue.removeAll { $0 == id }
+        timeouts.removeValue(forKey: id)?.cancel()
+        switch result {
+        case .success(let output):
+            request.continuation.resume(returning: output)
+        case .failure(let error):
+            request.continuation.resume(throwing: error)
         }
-        currentPair = nil
-        kickSessionIfNeeded()
     }
 
     private func kickSessionIfNeeded() {
-        guard currentPair == nil, let next = queue.first else { return }
-        currentPair = (next.source, next.target)
-        if var config = configuration,
-           config.source == next.source?.localeLanguage,
-           config.target == next.target.localeLanguage {
-            config.invalidate()
-            configuration = config
-        } else {
-            configuration = TranslationSession.Configuration(
-                source: next.source?.localeLanguage,
-                target: next.target.localeLanguage)
+        guard currentGeneration == nil else { return }
+        while let id = queue.first, requests[id] == nil {
+            queue.removeFirst()
         }
+        guard let id = queue.first, let request = requests[id] else {
+            hostedSession = nil
+            return
+        }
+
+        let generation = UUID()
+        currentPair = request.pair
+        currentGeneration = generation
+        hostedSession = HostedAppleTranslationSession(
+            generation: generation,
+            source: request.pair.source,
+            target: request.pair.target,
+            configuration: TranslationSession.Configuration(
+                source: request.pair.source?.localeLanguage,
+                target: request.pair.target.localeLanguage
+            )
+        )
     }
 
-    private func scheduleTimeout(for id: UUID) {
-        // ponytail: timeout only covers waiting in queue; a translate() call that
-        // hangs inside the session is not interrupted. Extend if it ever bites.
-        timeouts[id] = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 20_000_000_000)
-            guard let self, !Task.isCancelled else { return }
-            if let index = self.queue.firstIndex(where: { $0.id == id }) {
-                let request = self.queue.remove(at: index)
-                request.continuation.resume(throwing: TranslationError.apiError("Apple Translation timed out"))
-                if self.currentPair?.target == request.target, self.currentPair?.source == request.source {
-                    self.currentPair = nil
-                }
-                self.kickSessionIfNeeded()
-            }
-            self.timeouts.removeValue(forKey: id)
+    private func resetCurrentSession(cancelDrain: Bool) {
+        if cancelDrain { currentDrain?.task.cancel() }
+        currentDrain = nil
+        currentPair = nil
+        currentGeneration = nil
+        inFlightRequestID = nil
+        if var hosted = hostedSession {
+            hosted.configuration.invalidate()
+            hostedSession = hosted
         }
+        hostedSession = nil
     }
 
     private func ensureHostWindow() {
@@ -149,9 +273,24 @@ private struct AppleTranslationHostView: View {
     @ObservedObject var provider = AppleTranslationProvider.shared
 
     var body: some View {
-        Color.clear
-            .translationTask(provider.configuration) { session in
-                await provider.drain(using: session)
+        Group {
+            if let hosted = provider.hostedSession {
+                Color.clear
+                    .id(hosted.generation)
+                    .translationTask(hosted.configuration) { session in
+                        await provider.runHostedSession(hosted) { text in
+                            let response = try await session.translate(text)
+                            return AppleTranslationOutput(
+                                text: response.targetText,
+                                sourceLanguage: Language(localeLanguage: response.sourceLanguage)
+                                    ?? hosted.source
+                                    ?? .auto
+                            )
+                        }
+                    }
+            } else {
+                Color.clear
             }
+        }
     }
 }

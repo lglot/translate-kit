@@ -45,12 +45,15 @@ public struct GoogleCloudBackend: TranslationBackend {
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         if case .apiKey(let key) = credential {
             request.setValue(key, forHTTPHeaderField: "X-Goog-Api-Key")
-        } else if case .bearerToken(let token) = credential {
+        } else if case .bearerToken(let token, let quotaProject) = credential {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            if let quotaProject, !quotaProject.isEmpty {
+                request.setValue(quotaProject, forHTTPHeaderField: "X-Goog-User-Project")
+            }
         }
 
         let response = try await perform(request, using: httpClient)
-        try validateStatus(response.statusCode)
+        try validateStatus(response, source: source, target: target)
         guard
             let decoded = try? JSONDecoder().decode(GoogleCloudResponse.self, from: response.data),
             let translation = decoded.data.translations.first
@@ -69,18 +72,36 @@ public struct GoogleCloudBackend: TranslationBackend {
         )
     }
 
-    private func validateStatus(_ status: Int) throws {
-        switch status {
+    private func validateStatus(_ response: HTTPResponse, source: Language, target: Language) throws {
+        switch response.statusCode {
         case 200..<300:
             return
+        case 400:
+            if let message = try? JSONDecoder().decode(
+                GoogleCloudErrorResponse.self,
+                from: response.data
+            ).error.message, message.describesUnsupportedLanguage {
+                throw TranslationError.unsupportedLanguage("\(source.rawValue) to \(target.rawValue)")
+            }
+            throw TranslationError.apiError("Google Cloud rejected the request (HTTP 400)")
         case 401, 403:
             throw TranslationError.authenticationFailed(name)
         case 429:
             throw TranslationError.quotaExceeded(name)
         default:
-            throw TranslationError.apiError("Google Cloud rejected the request (HTTP \(status))")
+            throw TranslationError.apiError(
+                "Google Cloud rejected the request (HTTP \(response.statusCode))"
+            )
         }
     }
+}
+
+private struct GoogleCloudErrorResponse: Decodable {
+    let error: GoogleCloudErrorDetail
+}
+
+private struct GoogleCloudErrorDetail: Decodable {
+    let message: String
 }
 
 private struct GoogleCloudResponse: Decodable {

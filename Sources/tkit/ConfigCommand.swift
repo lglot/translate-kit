@@ -12,33 +12,42 @@ struct ConfigCommand: AsyncParsableCommand {
         ]
     )
 
+    @ParentCommand var root: TKitCommand
+
     struct Init: ParsableCommand {
         static let configuration = CommandConfiguration(commandName: "init")
+        @ParentCommand var parent: ConfigCommand
         @OptionGroup var global: GlobalOptions
 
         mutating func run() throws {
-            _ = try global.store.loadOrCreate()
-            CLIOutput.stdout(global.configurationURL.path + "\n")
+            _ = try options.store.loadOrCreate()
+            CLIOutput.stdout(options.configurationURL.path + "\n")
         }
+
+        private var options: GlobalOptions { global.resolved(with: parent.root.global) }
     }
 
     struct Path: ParsableCommand {
         static let configuration = CommandConfiguration(commandName: "path")
+        @ParentCommand var parent: ConfigCommand
         @OptionGroup var global: GlobalOptions
 
         mutating func run() {
-            CLIOutput.stdout(global.configurationURL.path + "\n")
+            CLIOutput.stdout(options.configurationURL.path + "\n")
         }
+
+        private var options: GlobalOptions { global.resolved(with: parent.root.global) }
     }
 
     struct Show: AsyncParsableCommand {
         static let configuration = CommandConfiguration(commandName: "show")
+        @ParentCommand var parent: ConfigCommand
         @OptionGroup var global: GlobalOptions
         @Flag(name: .long) var json = false
 
         mutating func run() async throws {
             do {
-                let configuration = try global.store.load()
+                let configuration = try options.store.load()
                 if json {
                     let states = await CLIEnvironment.registry().states(configuration: configuration)
                     let encoder = JSONEncoder()
@@ -48,52 +57,64 @@ struct ConfigCommand: AsyncParsableCommand {
                         providers: states
                     )))
                 } else {
-                    CLIOutput.stdout(try String(contentsOf: global.configurationURL, encoding: .utf8))
+                    CLIOutput.stdout(try String(contentsOf: options.configurationURL, encoding: .utf8))
                 }
             } catch {
                 throw CLIReportedError(error, json: json)
             }
         }
+
+        private var options: GlobalOptions { global.resolved(with: parent.root.global) }
     }
 
     struct Get: ParsableCommand {
         static let configuration = CommandConfiguration(commandName: "get")
+        @ParentCommand var parent: ConfigCommand
         @OptionGroup var global: GlobalOptions
         @Argument var key: String
 
         mutating func run() throws {
-            let configuration = try global.store.load()
+            let configuration = try options.store.load()
             CLIOutput.stdout(try ConfigurationEditor.get(key, from: configuration) + "\n")
         }
+
+        private var options: GlobalOptions { global.resolved(with: parent.root.global) }
     }
 
     struct Set: ParsableCommand {
         static let configuration = CommandConfiguration(commandName: "set")
+        @ParentCommand var parent: ConfigCommand
         @OptionGroup var global: GlobalOptions
         @Argument var key: String
         @Argument var value: String
 
         mutating func run() throws {
-            var configuration = try global.store.load()
+            var configuration = try options.store.load()
             try ConfigurationEditor.set(key, value: value, in: &configuration)
-            try global.store.save(configuration)
+            try options.store.save(configuration)
         }
+
+        private var options: GlobalOptions { global.resolved(with: parent.root.global) }
     }
 
     struct Unset: ParsableCommand {
         static let configuration = CommandConfiguration(commandName: "unset")
+        @ParentCommand var parent: ConfigCommand
         @OptionGroup var global: GlobalOptions
         @Argument var key: String
 
         mutating func run() throws {
-            var configuration = try global.store.load()
+            var configuration = try options.store.load()
             try ConfigurationEditor.unset(key, in: &configuration)
-            try global.store.save(configuration)
+            try options.store.save(configuration)
         }
+
+        private var options: GlobalOptions { global.resolved(with: parent.root.global) }
     }
 
     struct Discover: AsyncParsableCommand {
         static let configuration = CommandConfiguration(commandName: "discover")
+        @ParentCommand var parent: ConfigCommand
         @OptionGroup var global: GlobalOptions
         @Argument var provider: String?
         @Flag(name: .long) var json = false
@@ -121,16 +142,19 @@ struct ConfigCommand: AsyncParsableCommand {
                 throw CLIReportedError(error, json: json)
             }
         }
+
+        private var options: GlobalOptions { global.resolved(with: parent.root.global) }
     }
 
     struct Import: AsyncParsableCommand {
         static let configuration = CommandConfiguration(commandName: "import")
+        @ParentCommand var parent: ConfigCommand
         @OptionGroup var global: GlobalOptions
         @Argument var provider: String
 
         mutating func run() async throws {
             let provider = try parseProvider(provider)
-            let configuration = try global.store.load()
+            let configuration = try options.store.load()
             let resolver = CredentialResolver()
             let credential = try await resolver.resolve(for: provider, configuration: configuration)
             guard case .apiKey(let key) = credential else {
@@ -138,10 +162,13 @@ struct ConfigCommand: AsyncParsableCommand {
             }
             try resolver.store(key, for: provider)
         }
+
+        private var options: GlobalOptions { global.resolved(with: parent.root.global) }
     }
 
     struct SetKey: ParsableCommand {
         static let configuration = CommandConfiguration(commandName: "set-key")
+        @ParentCommand var parent: ConfigCommand
         @OptionGroup var global: GlobalOptions
         @Argument var provider: String
 
@@ -167,6 +194,7 @@ struct ConfigCommand: AsyncParsableCommand {
 
     struct DeleteKey: ParsableCommand {
         static let configuration = CommandConfiguration(commandName: "delete-key")
+        @ParentCommand var parent: ConfigCommand
         @OptionGroup var global: GlobalOptions
         @Argument var provider: String
 

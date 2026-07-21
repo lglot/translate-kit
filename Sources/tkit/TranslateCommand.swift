@@ -9,6 +9,7 @@ struct TranslateCommand: AsyncParsableCommand {
         abstract: "Translate text using the selected provider."
     )
 
+    @ParentCommand var root: TKitCommand
     @OptionGroup var global: GlobalOptions
 
     @Argument(help: "Text to translate. Reads stdin when omitted.")
@@ -29,7 +30,7 @@ struct TranslateCommand: AsyncParsableCommand {
     mutating func run() async throws {
         do {
             let sourceText = try inputText()
-            let configuration = try global.store.load()
+            let configuration = try options.store.load()
             let source = try from.map(parseLanguage)
             let target = try to.map(parseLanguage)
             let selectedProvider = try provider.map(parseProvider)
@@ -52,6 +53,8 @@ struct TranslateCommand: AsyncParsableCommand {
             throw CLIReportedError(error, json: json)
         }
     }
+
+    private var options: GlobalOptions { global.resolved(with: root.global) }
 
     private func inputText() throws -> String {
         if !text.isEmpty { return text.joined(separator: " ") }

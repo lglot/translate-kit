@@ -61,6 +61,25 @@ final class TranslationServiceTests: XCTestCase {
         XCTAssertEqual(direction.target, .japanese)
     }
 
+    func testAutomaticDirectionRejectsPairWithSameBaseLanguage() {
+        let pair = LanguagePair(
+            first: Language(rawValue: "pt-BR")!,
+            second: Language(rawValue: "pt-PT")!
+        )
+
+        XCTAssertThrowsError(try TranslationDirectionResolver.resolve(
+            text: "Olá, este texto não identifica de forma confiável a variante regional.",
+            source: nil,
+            target: nil,
+            pair: pair
+        )) { error in
+            XCTAssertEqual(
+                error as? TranslationDirectionError,
+                .ambiguousConfiguredPair("pt-BR", "pt-PT")
+            )
+        }
+    }
+
     func testTranslationServiceDoesNotFallbackAfterSelectedProviderFails() async {
         let resolver = RecordingBackendResolver(error: .authenticationFailed("DeepL"))
         let service = TranslationService(backendResolver: resolver)

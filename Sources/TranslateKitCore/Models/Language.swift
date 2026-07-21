@@ -37,6 +37,9 @@ public struct Language: RawRepresentable, Hashable, Identifiable, Codable, Senda
 
     public var id: String { rawValue }
     public var isValidTarget: Bool { self != .auto }
+    var baseLanguageCode: String {
+        String(rawValue.split(separator: "-", maxSplits: 1)[0]).lowercased()
+    }
 
     public var displayName: String {
         if self == .auto { return "Auto-detect" }

@@ -32,4 +32,18 @@ final class LanguagePairTests: XCTestCase {
         XCTAssertEqual(direction.source, .english)
         XCTAssertEqual(direction.target, .italian)
     }
+
+    func testDetectionMapsBaseLanguageToRegionalPairMember() {
+        let regionalPair = LanguagePair(
+            first: .english,
+            second: Language(rawValue: "pt-BR")!
+        )
+
+        XCTAssertEqual(
+            regionalPair.detectSource(
+                of: "Olá, como você está? Hoje vamos passear pela cidade com nossos amigos."
+            ),
+            Language(rawValue: "pt-BR")!
+        )
+    }
 }

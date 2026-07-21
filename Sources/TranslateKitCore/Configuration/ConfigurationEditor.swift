@@ -90,8 +90,8 @@ public enum ConfigurationEditorError: LocalizedError, Equatable, Sendable {
         switch self {
         case .unknownKey(let key):
             return "Unknown configuration key: \(key)"
-        case .invalidValue(let key, let value):
-            return "Invalid value for \(key): \(value)"
+        case .invalidValue(let key, _):
+            return "Invalid value for \(key)"
         }
     }
 }

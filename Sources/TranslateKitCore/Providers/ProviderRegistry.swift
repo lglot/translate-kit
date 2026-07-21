@@ -35,17 +35,20 @@ public struct ProviderDescriptor: Codable, Equatable, Sendable {
 
 public struct ProviderState: Codable, Equatable, Sendable {
     public let descriptor: ProviderDescriptor
+    public let isAvailable: Bool
     public let isConfigured: Bool
     public let credentialSources: [CredentialSource]
     public let profiles: [String]
 
     public init(
         descriptor: ProviderDescriptor,
+        isAvailable: Bool = true,
         isConfigured: Bool,
         credentialSources: [CredentialSource],
         profiles: [String] = []
     ) {
         self.descriptor = descriptor
+        self.isAvailable = isAvailable
         self.isConfigured = isConfigured
         self.credentialSources = credentialSources
         self.profiles = profiles
@@ -157,6 +160,9 @@ public struct ProviderRegistry: BackendResolving, Sendable {
                 httpClient: httpClient
             )
         case .aws:
+            guard credential.isAWSCredential else {
+                throw TranslationError.apiKeyMissing("Amazon Translate credentials")
+            }
             do {
                 let client = try await AWSSDKTranslateClient.make(
                     configuration: configuration.providers.aws,
@@ -179,7 +185,7 @@ public struct ProviderRegistry: BackendResolving, Sendable {
         await withTaskGroup(of: ProviderState.self) { group in
             for descriptor in Self.descriptors {
                 group.addTask {
-                    if descriptor.id == .apple || descriptor.id == .libretranslate {
+                    if descriptor.id == .apple {
                         return ProviderState(
                             descriptor: descriptor,
                             isConfigured: true,
@@ -187,10 +193,16 @@ public struct ProviderRegistry: BackendResolving, Sendable {
                         )
                     }
                     let discovery = try? await credentialResolver.discover(provider: descriptor.id)
+                    let compatibleSources = compatibleSources(
+                        for: descriptor.id,
+                        configuration: configuration,
+                        discovery: discovery
+                    )
                     return ProviderState(
                         descriptor: descriptor,
-                        isConfigured: discovery?.isAvailable ?? false,
-                        credentialSources: discovery?.sources ?? [.none],
+                        isConfigured: descriptor.id == .libretranslate
+                            || compatibleSources.contains { $0 != .none },
+                        credentialSources: compatibleSources,
                         profiles: discovery?.profiles ?? []
                     )
                 }
@@ -199,6 +211,65 @@ public struct ProviderRegistry: BackendResolving, Sendable {
             for await state in group { states.append(state) }
             let order = Dictionary(uniqueKeysWithValues: Self.descriptors.enumerated().map { ($1.id, $0) })
             return states.sorted { order[$0.descriptor.id, default: 0] < order[$1.descriptor.id, default: 0] }
+        }
+    }
+
+    private func compatibleSources(
+        for provider: ProviderID,
+        configuration: TranslateKitConfiguration,
+        discovery: CredentialDiscovery?
+    ) -> [CredentialSource] {
+        guard let discovery else { return [.none] }
+
+        let allowed: Set<CredentialSource>
+        switch provider {
+        case .apple:
+            allowed = [.none]
+        case .deepl, .libretranslate:
+            allowed = [.translateKitKeychain, .environment, .externalKeychain]
+        case .googleCloud:
+            switch configuration.providers.googleCloud.auth {
+            case "api-key": allowed = [.translateKitKeychain, .environment]
+            case "gcloud": allowed = [.googleCloudCLI]
+            default: allowed = [.translateKitKeychain, .environment, .googleCloudCLI]
+            }
+        case .azure:
+            switch configuration.providers.azure.auth {
+            case "api-key": allowed = [.translateKitKeychain, .environment]
+            case "entra": allowed = [.azureCLI]
+            default:
+                allowed = TranslateKitConfiguration.isAzurePublicCustomEndpoint(
+                    configuration.providers.azure.endpoint
+                )
+                    ? [.translateKitKeychain, .environment, .azureCLI]
+                    : [.translateKitKeychain, .environment]
+            }
+        case .aws:
+            switch configuration.providers.aws.auth {
+            case "static": allowed = [.translateKitKeychain]
+            default:
+                let profile = configuration.providers.aws.profile
+                if !profile.isEmpty {
+                    guard discovery.profiles.contains(profile) else { return [.none] }
+                    allowed = [.awsProfile]
+                } else {
+                    allowed = [.environment, .awsProfile, .awsNativeChain]
+                }
+            }
+        }
+
+        let sources = discovery.sources.filter { $0 != .none && allowed.contains($0) }
+        return sources.isEmpty ? [.none] : sources
+    }
+}
+
+private extension ProviderCredential {
+    var isAWSCredential: Bool {
+        switch self {
+        case .awsProfile, .awsStatic:
+            return true
+        default:
+            return false
         }
     }
 }

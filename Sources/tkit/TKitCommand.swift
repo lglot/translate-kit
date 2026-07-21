@@ -10,6 +10,8 @@ struct TKitCommand: AsyncParsableCommand {
         subcommands: [TranslateCommand.self, ConfigCommand.self, ProvidersCommand.self]
     )
 
+    @OptionGroup var global: GlobalOptions
+
     mutating func run() async throws {
         throw CleanExit.helpRequest()
     }
