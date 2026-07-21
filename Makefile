@@ -5,7 +5,11 @@ BUILD_DIR = .build
 APP_BUNDLE = $(BUILD_DIR)/$(APP_NAME).app
 APP_EXECUTABLE = $(BUILD_DIR)/debug/$(APP_NAME)
 CLI_EXECUTABLE = $(BUILD_DIR)/debug/tkit
-RELEASE_DIR = $(BUILD_DIR)/apple/Products/Release
+ARM64_BUILD_DIR = $(BUILD_DIR)
+X86_64_BUILD_DIR = $(BUILD_DIR)/x86_64
+ARM64_RELEASE_DIR = $(ARM64_BUILD_DIR)/arm64-apple-macosx/release
+X86_64_RELEASE_DIR = $(X86_64_BUILD_DIR)/x86_64-apple-macosx/release
+RELEASE_DIR = $(BUILD_DIR)/universal-release
 VERSION = $(shell /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
 CODE_SIGN_IDENTITY_NAME = TranslateKit Dev
 CODE_SIGN_IDENTITY = $(shell security find-identity -v -p codesigning | awk '/"$(CODE_SIGN_IDENTITY_NAME)"/ { print $$2; exit }')
@@ -56,7 +60,16 @@ install: build
 
 # Universal release build: bundle + zip, signed with the stable development identity.
 release:
-	swift build -c release --arch arm64 --arch x86_64
+	swift build -c release --arch arm64 --build-path "$(ARM64_BUILD_DIR)"
+	swift build -c release --arch x86_64 --build-path "$(X86_64_BUILD_DIR)"
+	@rm -rf "$(RELEASE_DIR)"
+	@mkdir -p "$(RELEASE_DIR)"
+	@lipo -create "$(ARM64_RELEASE_DIR)/$(APP_NAME)" "$(X86_64_RELEASE_DIR)/$(APP_NAME)" \
+		-output "$(RELEASE_DIR)/$(APP_NAME)"
+	@lipo -create "$(ARM64_RELEASE_DIR)/tkit" "$(X86_64_RELEASE_DIR)/tkit" \
+		-output "$(RELEASE_DIR)/tkit"
+	@cp -R $(ARM64_RELEASE_DIR)/*.resources "$(RELEASE_DIR)/" 2>/dev/null || true
+	@cp -R $(ARM64_RELEASE_DIR)/*.bundle "$(RELEASE_DIR)/" 2>/dev/null || true
 	$(call make_bundle,$(RELEASE_DIR))
 	@cd "$(BUILD_DIR)" && ditto -c -k --keepParent "$(APP_NAME).app" "$(APP_NAME)-$(VERSION).zip"
 	@echo "Release artifact: $(BUILD_DIR)/$(APP_NAME)-$(VERSION).zip"
