@@ -1,5 +1,7 @@
 # API Keys Settings: design
 
+> Superseded by `2026-07-21-settings-sidebar-providers-design.md`. This file records the narrower design that preceded the multi-provider implementation.
+
 ## Obiettivo
 
 Rendere la sezione `API Keys` della finestra Settings leggibile e precisa, mantenendo l'aspetto nativo macOS e senza modificare il comportamento di Keychain o dei backend.

@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved for implementation on 2026-07-18. This design extends the existing API-key settings design with the full provider, configuration, credential-discovery, and CLI scope.
+Approved for implementation on 2026-07-18. This design defines the provider, configuration, credential-discovery, and CLI scope. The current app navigation and provider-management UI are defined separately in `2026-07-21-settings-sidebar-providers-design.md`.
 
 ## Goals
 
@@ -193,7 +193,7 @@ The command reports stable ID, name, privacy classification, configuration state
 ## App integration
 
 - Settings uses the shared configuration store for language pair, active provider, endpoints, plan, AWS profile, and region.
-- The API-key section follows the already approved aligned native layout and extends it to Azure and LibreTranslate.
+- Provider management follows `2026-07-21-settings-sidebar-providers-design.md`.
 - AWS shows discovered profile names and a manual static-credential fallback behind an explicit advanced action.
 - A credential save is reported as successful only after the Keychain operation succeeds.
 - The backend picker lists all providers. Unconfigured providers remain visible and explain what is missing instead of disappearing.
