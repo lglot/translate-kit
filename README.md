@@ -10,6 +10,10 @@
 [![macOS](https://img.shields.io/badge/macOS-15%2B-blue.svg)](https://www.apple.com/macos/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+<p align="center">
+  <a href="docs/teaser.mp4"><img src="docs/teaser.gif" width="720" alt="TranslateKit demo: Control-Command-R replaces the selection in place, Control-Command-T opens the floating panel, tkit translates from the terminal"></a>
+</p>
+
 TranslateKit can replace selected text in place, show a floating translation panel, expose macOS Services, or translate from a terminal. The app and CLI share the same provider and language configuration.
 
 ## App workflow
