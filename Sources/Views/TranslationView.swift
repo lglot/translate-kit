@@ -88,21 +88,6 @@ struct TranslatingView: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("ORIGINAL")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                ScrollView {
-                    Text(sourceText)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 140)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
                 Text("TRANSLATION")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.tertiary)
